@@ -1,0 +1,32 @@
+package edu.pipeline;
+
+import checker.Checker;
+import edu.lexer.Lexer;
+import edu.parser.Parser;
+
+public class PipelineData {
+	public enum PipelineError {
+		NONE,
+		FILE,
+		LEXER,
+		PARSER,
+		CHECKER
+	}
+	public final Lexer lexer;
+	public final Parser parser;
+	public final Checker checker;
+	public final PipelineError error;
+	
+	public PipelineData(Lexer lexer, Parser parser, Checker checker, PipelineError error) {
+		this.lexer = lexer;
+		this.parser = parser;
+		this.checker = checker;
+		this.error = error;
+	}
+	public PipelineData(Lexer lexer, Parser parser, Checker checker) {
+		this.lexer = lexer;
+		this.parser = parser;
+		this.checker = checker;
+		this.error = PipelineError.NONE;
+	}
+}

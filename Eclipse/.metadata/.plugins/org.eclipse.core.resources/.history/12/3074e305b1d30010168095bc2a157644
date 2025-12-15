@@ -1,0 +1,13 @@
+package edu.error;
+
+import edu.data.CodeSection;
+import edu.data.Token;
+
+public class ParserError extends IError{
+    public ParserError(CodeSection section, String msg) {
+    		super(section, msg);
+    }
+    public ParserError(Token token, String msg) {
+    		super(new CodeSection(token), msg);
+    }
+}

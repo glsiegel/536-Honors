@@ -1,0 +1,10 @@
+as simple.calls;
+import complex.another.collection as col;
+
+print col.gcd(7,35); 
+
+fun int hey() {return col.yay;}
+
+print hey();
+
+

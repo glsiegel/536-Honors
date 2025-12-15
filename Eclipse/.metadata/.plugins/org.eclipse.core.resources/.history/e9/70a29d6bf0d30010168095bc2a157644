@@ -1,0 +1,9 @@
+package pipeline;
+
+public class FileManagerException extends RuntimeException {
+	
+	public FileManagerException(String msg) {
+		super(msg);
+	}
+
+}

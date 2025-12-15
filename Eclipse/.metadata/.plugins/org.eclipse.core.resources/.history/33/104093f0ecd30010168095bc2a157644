@@ -1,0 +1,289 @@
+package pipeline;
+
+import java.io.File;
+import java.util.List;
+import java.util.Map;
+
+import data.IdentifierInfo;
+import data.Stmt;
+import env.GlobalEnvironment;
+
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedList;
+
+/**
+ * Manages a collection of files that comprise a single program.
+ * 
+ * @param <T> The type that the manager is concerned with. VarType for checker,
+ *            Object for Interpreter
+ */
+public class FileManager<T> implements Iterable<Map.Entry<Rootpath, FileInfo<T>>> {
+	private final File root_directory;
+	private final HashMap<Rootpath, FileInfo<T>> fileMap;
+
+	@Override
+	public String toString() {
+		StringBuilder sb = new StringBuilder();
+		sb.append("Root directory: ");
+		sb.append(root_directory.getAbsolutePath());
+		sb.append('\n');
+		for (Map.Entry<Rootpath, FileInfo<T>> entry : fileMap.entrySet()) {
+			sb.append(" + ");
+			sb.append(entry.getKey());
+			sb.append(": ");
+			sb.append(entry.getValue());
+			sb.append('\n');
+		}
+		return sb.toString();
+	}
+
+	/**
+	 * From a file and it's rootpath, builds a new file manager.
+	 * 
+	 * @param current_file_rootpath the rootpath of the current file
+	 * @param current_file          the file
+	 */
+	public FileManager(Rootpath current_file_rootpath, File current_file) {
+		// first, sanity checks
+		if (!current_file.getName().contains(current_file_rootpath.getLast())) {
+			throw new FileManagerException(String.format("The provided file %s was not at the end of the path %s.",
+					current_file.getName(), current_file_rootpath));
+		}
+		for (int i = current_file_rootpath.size() - 2; i >= 0; i--) {
+			current_file = current_file.getParentFile();
+			if (current_file == null)
+				throw new FileManagerException("Cannot ascend past file system root. No FileManager here.");
+			// TODO if we throw these exceptions, it means that the 'as' statement is
+			// incorrect!
+			// TODO figure out what to do with that info.
+			if (!current_file.getName().equals(current_file_rootpath.get(i))) {
+				throw new FileManagerException(
+						String.format("Expected directory %s at index %d of rootpath, but got directory %s.",
+								current_file_rootpath.get(i), i, current_file.getName()));
+			}
+		}
+		// ascend one more for root directory
+		current_file = current_file.getParentFile();
+		if (current_file == null)
+			throw new FileManagerException("Cannot ascend past file system root. No FileManager here.");
+
+		root_directory = current_file;
+		fileMap = new HashMap<>();
+
+	}
+
+	public boolean isRootOf(String absolute_file_path) {
+		String root_absolute_path = root_directory.getAbsolutePath();
+		return absolute_file_path.contains(root_absolute_path);
+	}
+
+	// TODO don't do this. this sucks.
+	public boolean isRootOf(File file) {
+		String root_absolute_path = root_directory.getAbsolutePath();
+		return file.getAbsolutePath().contains(root_absolute_path);
+	}
+
+	/**
+	 * Tells the file manager that the globals have been recomputed for a given
+	 * file. Stores the globals, and also updates the last touched time. Both of
+	 * these together help with imports and keeping our references up-to-date.
+	 */
+	public void indicateEvaluation(Rootpath rootpath, List<error.IError> errors, List<Stmt> statements,
+			GlobalEnvironment<T> globals, List<IdentifierInfo> identifiers) {
+		if (!fileMap.containsKey(rootpath))
+			throw new FileManagerException(
+					String.format("This file manager does not contain the provided rootpath '%s'.", rootpath));
+		FileInfo<T> info = fileMap.get(rootpath);
+		info.evaluate(errors, statements, globals, identifiers);
+	}
+
+	/**
+	 * Precondition: the file manager is the root of the given file
+	 * 
+	 * @param f
+	 * @return
+	 */
+	public Rootpath getRootpathOf(File f) {
+		if (!isRootOf(f))
+			throw new FileManagerException(String.format("This file manager is not the root of file '%s'.", f));
+
+		List<String> rootpath = new LinkedList<>();
+		String end_part = f.getName();
+		end_part = end_part.split("\\.")[0];
+
+		rootpath.addFirst(end_part);
+		f = f.getParentFile();
+
+		String root_absolute_path = root_directory.getAbsolutePath();
+		while (!root_absolute_path.equals(f.getAbsolutePath())) {
+
+			rootpath.addFirst(f.getName());
+			f = f.getParentFile();
+		}
+
+		return new Rootpath(rootpath);
+	}
+
+	/*
+	 * public void calculateAndSetGlobals(Rootpath rootpath) { if
+	 * (!fileMap.containsKey(rootpath)) { throw new
+	 * FileManagerException("Hey! Cannot indicate globals of file that doesn't exist to this manager!"
+	 * ); } FileInfo info = fileMap.get(rootpath);
+	 * 
+	 * // TODO // from the file, use the URI to make diag messages
+	 * 
+	 * StatementData stmtData = Pipeline.getStatements(info.file); if
+	 * (stmtData.statements == null) { info.evaluate(stmtData.errors, null, null,
+	 * null); return; // TODO how do we escape?
+	 * 
+	 * } List<edu.error.Error> aggregate = new ArrayList<>();
+	 * aggregate.addAll(stmtData.errors);
+	 * 
+	 * GlobalBuilder gb = Pipeline.runGlobalBuilder(stmtData.statements);
+	 * aggregate.addAll(gb.typeFailures);
+	 * 
+	 * if (gb.globals == null) { info.evaluate(aggregate,stmtData.statements, null,
+	 * null); return; // ????? TODO }
+	 * 
+	 * info.evaluate(aggregate,stmtData.statements, gb.globals, null);
+	 * 
+	 * return; }
+	 */
+
+	/**
+	 * Pulls a file's information into this FileManager based on the rootpath.
+	 * Returns the pulled file. Null is returned if the file could not be pulled in.
+	 * A FileManagerException is thrown if the file is already pulled in.
+	 * 
+	 * @param rootpath
+	 * @param opened
+	 * @return
+	 */
+	public FileInfo<T> pullInFile(Rootpath rootpath, boolean opened) throws FileManagerException {
+		if (fileMap.containsKey(rootpath)) {
+			// it's already there...
+			throw new FileManagerException("It's already pulled in! Don't call this without checking.");
+		}
+		File file_from_rootpath = rootpath.toFile(root_directory.getAbsolutePath());
+		if (file_from_rootpath == null)
+			return null; // could not acknowledge
+
+		FileInfo<T> info = new FileInfo<>(0, file_from_rootpath, opened);
+		fileMap.put(rootpath, info);
+
+		return info;
+	}
+
+	protected boolean removeFile(Rootpath rootpath) {
+		if (fileMap.containsKey(rootpath)) {
+			fileMap.remove(rootpath);
+			return true;
+		}
+		return false;
+	}
+
+	public boolean isRootOf(Rootpath rootpath, File file) {
+		File current_file = root_directory;
+
+		// first, go through directories
+		for (int i = 0; i < rootpath.size() - 1; i++) {
+			String cur_str = rootpath.get(i);
+			File[] results = current_file.listFiles((f, name) -> f.isDirectory() && name.equals(cur_str));
+			if (results.length == 0)
+				return false;
+			if (results.length > 1)
+				throw new RuntimeException("Hey! This shouldn't be possible to have more than 1 result!");
+			current_file = results[0]; // get first directory
+		}
+		// then, find end file
+		File[] results = current_file.listFiles((f, name) -> f.isFile() && name.equals(rootpath.getLast()));
+		if (results.length == 0)
+			return false;
+		if (results.length > 1)
+			throw new RuntimeException("Hey! This shouldn't be possible to have more than 1 result!");
+		// sanity check
+		if (!file.equals(results[1]))
+			return false;
+
+		return true;
+
+	}
+
+	public boolean has(Rootpath rootpath) {
+		return fileMap.containsKey(rootpath);
+	}
+
+	/**
+	 * Determines whether this manager is holding onto worthless info. If it's
+	 * worthless, it can be discarded.
+	 * 
+	 * @return
+	 */
+	public boolean isWorthless() {
+		for (FileInfo<T> info : fileMap.values()) {
+			if (info.opened)
+				return false;
+		}
+		return true;
+	}
+
+	public void close(Rootpath rootpath) {
+		FileInfo<T> info = fileMap.get(rootpath);
+		info.opened = false;
+	}
+
+	public void open(Rootpath rootpath) {
+		FileInfo<T> info = fileMap.get(rootpath);
+		info.opened = true;
+	}
+
+	/**
+	 * Gets the rootpath of the next expired file that needs to be re-evaluated.
+	 * 
+	 * @return
+	 */
+	public Iterator<Map.Entry<Rootpath, FileInfo<T>>> expiredIterator() {
+
+		HashSet<Map.Entry<Rootpath, FileInfo<T>>> set = new HashSet<>();
+
+		for (Map.Entry<Rootpath, FileInfo<T>> entry : fileMap.entrySet()) {
+			if (entry.getValue().isExpired())
+				set.add(entry);
+		}
+
+		return set.iterator();
+	}
+
+	/**
+	 * Gets the rootpath of the next file that has not been touched by the checker.
+	 * 
+	 * @return
+	 */
+
+	public Iterator<Map.Entry<Rootpath, FileInfo<T>>> uncheckedIterator() {
+
+		HashSet<Map.Entry<Rootpath, FileInfo<T>>> set = new HashSet<>();
+
+		for (Map.Entry<Rootpath, FileInfo<T>> entry : fileMap.entrySet()) {
+			if (entry.getValue().getIdentifiers() == null)
+				set.add(entry);
+		}
+
+		return set.iterator();
+	}
+
+	public FileInfo<T> getFileInfo(Rootpath rootpath) {
+		if (!fileMap.containsKey(rootpath)) {
+			throw new FileManagerException("Did not have a file entry for " + rootpath);
+		}
+		return fileMap.get(rootpath);
+	}
+
+	@Override
+	public Iterator<Map.Entry<Rootpath, FileInfo<T>>> iterator() {
+		return fileMap.entrySet().iterator();
+	}
+
+}

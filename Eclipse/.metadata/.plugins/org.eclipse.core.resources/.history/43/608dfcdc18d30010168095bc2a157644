@@ -1,0 +1,164 @@
+package edu.lsp;
+
+
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+
+import org.eclipse.lsp4j.Diagnostic;
+import org.eclipse.lsp4j.InitializeParams;
+import org.eclipse.lsp4j.InitializeResult;
+import org.eclipse.lsp4j.MessageParams;
+import org.eclipse.lsp4j.MessageType;
+import org.eclipse.lsp4j.PublishDiagnosticsParams;
+import org.eclipse.lsp4j.SemanticTokens;
+import org.eclipse.lsp4j.SemanticTokensLegend;
+import org.eclipse.lsp4j.SemanticTokensWithRegistrationOptions;
+import org.eclipse.lsp4j.ServerCapabilities;
+import org.eclipse.lsp4j.SetTraceParams;
+import org.eclipse.lsp4j.TextDocumentSyncKind;
+import org.eclipse.lsp4j.TextDocumentSyncOptions;
+import org.eclipse.lsp4j.jsonrpc.Launcher;
+import org.eclipse.lsp4j.launch.LSPLauncher;
+import org.eclipse.lsp4j.services.LanguageClient;
+import org.eclipse.lsp4j.services.LanguageClientAware;
+import org.eclipse.lsp4j.services.TextDocumentService;
+import org.eclipse.lsp4j.services.WorkspaceService;
+
+import edu.data.IdentifierInfo;
+import edu.pipeline.FileManager;
+import edu.pipeline.FileManagerSet;
+
+public class BadlangLanguageServer implements org.eclipse.lsp4j.services.LanguageServer, LanguageClientAware {
+	private final BadlangTextDocumentService textService = new BadlangTextDocumentService(this);
+	private final BadlangWorkspaceService workspaceService = new BadlangWorkspaceService();
+	
+	final Map<String, SemanticTokens> semanticCache = new ConcurrentHashMap<>();
+	final Map<String, CompletableFuture<SemanticTokens>> pendingSemanticRequests = new ConcurrentHashMap<>();
+	final FileManagerSet fileManagers = new FileManagerSet();
+	
+	// used for checking
+	private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+	private ScheduledFuture<?> future;
+	
+	public synchronized void onInterrupt(Runnable newTask) {
+        // stop the previous task, if it exists
+        if (future != null && !future.isDone()) {
+            future.cancel(false);
+        }
+
+        // schedule new task
+        future = scheduler.schedule(newTask, 1, TimeUnit.SECONDS); // delay for 1 second
+    }
+	
+	public void demoMessage(String msg) {
+		if (client == null) {
+			// System.err.println("No client connected!!!");
+			return;
+		}
+		MessageParams params = new MessageParams();
+		params.setMessage(msg);
+		params.setType(MessageType.Info);
+		client.showMessage(params);
+		System.err.println(msg);
+	}
+	
+	public void showDiagnostics(String uri, List<Diagnostic> diags) {
+		PublishDiagnosticsParams params = new PublishDiagnosticsParams(uri, diags);
+		client.publishDiagnostics(params);
+	}
+	
+	@Override
+	public CompletableFuture<InitializeResult> initialize(InitializeParams params) {
+		// TODO Auto-generated method stub
+		// demoMessage("Hey! We initialized the server!");
+		ServerCapabilities capabilities = new ServerCapabilities();
+
+	    // for now, just say we support textDocumentSync (basic)
+	    TextDocumentSyncOptions syncOptions = new TextDocumentSyncOptions();
+	    syncOptions.setOpenClose(true);
+	    syncOptions.setChange(TextDocumentSyncKind.Incremental);
+	    capabilities.setTextDocumentSync(syncOptions);
+	    
+	    
+	    SemanticTokensLegend legend = new SemanticTokensLegend(Arrays.asList(IdentifierInfo.KINDS), Arrays.asList(IdentifierInfo.MODIFIERS));
+	    SemanticTokensWithRegistrationOptions options = new SemanticTokensWithRegistrationOptions();
+	    options.setLegend(legend);
+	    options.setFull(false);  // full document semantic tokens
+	    options.setRange(true);
+	    capabilities.setSemanticTokensProvider(options);
+
+	    InitializeResult result = new InitializeResult(capabilities);
+	    return CompletableFuture.completedFuture(result);
+	}
+
+	@Override
+	public CompletableFuture<Object> shutdown() {
+		// TODO Auto-generated method stub
+		// demoMessage("Shutting server down...?");
+		// scheduler.shutdown(); // TODO uhm do i put this here?
+		return CompletableFuture.completedFuture(null);
+	}
+
+	@Override
+	public void exit() {
+		scheduler.shutdown();
+		
+	}
+
+	@Override
+	public TextDocumentService getTextDocumentService() {
+		return textService;
+	}
+
+	@Override
+	public WorkspaceService getWorkspaceService() {
+		return workspaceService;
+	}
+	
+	@Override
+	public void setTrace(SetTraceParams params) {
+	    // Ignore; tracing is optional
+	}
+	
+	
+	
+	public static void main(String[] args) throws InterruptedException, ExecutionException {
+		if (args[0].equals("-lsp")) {
+			
+			// run the LSP
+			InputStream in = System.in;
+	        OutputStream out = System.out;
+	        BadlangLanguageServer server = new BadlangLanguageServer();
+	        Launcher<org.eclipse.lsp4j.services.LanguageClient> launcher = LSPLauncher.createServerLauncher(server, in, out);
+	        Future<Void> start_listening = launcher.startListening();
+	        
+	        
+	        server.connect(launcher.getRemoteProxy());
+	        
+	        start_listening.get();
+		} else if (args[0].equals("-interp")) {
+			// run the interpreter
+		}
+        
+    }
+
+    private LanguageClient client;
+    
+    @Override
+    public void connect(LanguageClient client) {
+        this.client = client;
+    }
+	
+}

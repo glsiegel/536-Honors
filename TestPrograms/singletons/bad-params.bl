@@ -1,0 +1,6 @@
+fun int x(int a, b, int c) {
+    c = a + b * c;
+    return c;
+    
+}
+print jacob;

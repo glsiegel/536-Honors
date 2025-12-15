@@ -1,0 +1,120 @@
+package visitor.env;
+
+import java.util.HashMap;
+
+import edu.data.Stmt;
+import edu.data.VarType;
+
+public class GlobalEnvironment<T> implements IEnvironment<T> {
+	/**
+	 * Global place for functions
+	 */
+	private final HashMap<String, Stmt.Function> functionMap;
+
+	/**
+	 * Global environment. The current environment starts as this one.
+	 */
+	private final HashMap<String, T> variableMap;
+	
+	public GlobalEnvironment() {
+		this.functionMap = new HashMap<>();
+		this.variableMap = new HashMap<>();
+	}
+	
+	/**
+	 * Tries to get the function from its identifier.
+	 * 
+	 * @param name identifier of function
+	 * @return the function
+	 */
+	public Stmt.Function getFunction(String name) {
+		
+		if (!functionMap.containsKey(name))
+			return null;
+		return functionMap.get(name);
+	}
+	
+	/**
+	 * Tries to store a function.
+	 * 
+	 * @param fcn the function to store
+	 * @return true if it was sucessful. false if there was a collision (meaning
+	 *         there is already a function with this name)
+	 */
+	public boolean putFunction(Stmt.Function fcn) {
+
+		if (functionMap.containsKey(fcn.name)) {
+			return false;
+		}
+		functionMap.put(fcn.name, fcn);
+		return true;
+	}
+
+	@Override
+	public boolean has(String name) {
+		// TODO Auto-generated method stub
+		return variableMap.containsKey(name);
+	}
+
+	@Override
+	public boolean put(String name, VarType val, boolean parameter) {
+		if (variableMap.containsKey(name)) {
+			return false;
+            // cannot use this method if the current scope already has an identifier
+            // for that name.
+        }
+        variableMap.put(name, val);
+        return true;
+		
+	}
+
+	@Override
+	public boolean assign(String name, VarType val) {
+		// we need to find the highest scope identifier that is in the environment.
+        // like how we can override a variable in a more nested scope.
+
+        // check if the identifier exists at this global level
+        if (variableMap.containsKey(name)) {
+            Object prevVal = variableMap.get(name);
+
+            // verify that the new value does not change the type of the identifier
+            if (!prevVal.getClass().equals(val.getClass())) {
+            		return false;
+            }
+            variableMap.put(name, val); // replace the value
+            return true;
+
+        } else {
+            return false;
+        }
+
+	}
+
+	@Override
+	public VarType get(String name) {
+		return variableMap.get(name);
+	}
+
+
+	@Override
+	public boolean isFunction() {
+		return false;
+	}
+
+	@Override
+	public int getDepth() {
+		return 0;
+	}
+
+	@Override
+	public VarType getReturnType() {
+		return VarType.NONE;
+	}
+
+	@Override
+	public int getKindIdx(String name) {
+		return 0;
+	}
+	
+	
+}

@@ -1,0 +1,62 @@
+{
+  "name": "badlang",
+  "displayName": "Badlang",
+  "description": "nothing",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.105.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:badlang"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "badlang",
+        "aliases": ["BadLang", "Badlang", "badlang"],
+        "extensions": [".bl"],
+        "semanticTokenScopes": {
+          "global": [
+            "variable.other.constant.badlang"
+          ],
+          "variable": [
+            "variable.other.badlang"
+          ],
+          "parameter": [
+            "variable.parameter.badlang"
+          ],
+          "function": [
+            "entity.name.function.badlang"
+          ]
+        }
+      }
+    ],
+    "grammars":[
+      {
+        "language": "badlang",
+        "scopeName": "source.badlang",
+        "path": "./syntaxes/badlang.tmLanguage.json"
+      }
+    ]
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "pretest": "npm run lint",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "@types/vscode": "^1.105.0",
+    "@vscode/test-cli": "^0.0.11",
+    "@vscode/test-electron": "^2.5.2",
+    "eslint": "^9.36.0"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  }
+}

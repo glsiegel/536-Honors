@@ -1,0 +1,8 @@
+as second; // atrocious and easily fixable error: doesn't match file name!
+// other errors not expected to be reported in this case until this is fixed
+import third as t;
+
+
+int x = 20;
+
+int j = true; // can catch this error even with bad name

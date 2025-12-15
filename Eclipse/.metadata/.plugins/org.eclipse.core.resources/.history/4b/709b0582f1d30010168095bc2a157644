@@ -1,0 +1,98 @@
+package pipeline;
+
+import java.io.File;
+import java.util.Iterator;
+import java.util.List;
+
+/**
+ * Rootpath class, which is essentially just a list of strings with some extra
+ * methods attached. A rootpath is a path from a root directory to a file. In
+ * string format, they look like: directory1.directory2.file, where the file is
+ * located at root/directory1/directory2/file.bl
+ */
+public class Rootpath implements Iterable<String> {
+	/**
+	 * Underlying list representation of rootpath.
+	 */
+	private final List<String> rootpath;
+	/**
+	 * String representation of rootpath. Stored so that we do not have to
+	 * recalculate it every time we want it.
+	 */
+	private final String flat_rootpath;
+	
+	/**
+	 * Make a rootpath from a list of strings.
+	 * @param rootpath
+	 */
+	public Rootpath(List<String> rootpath) {
+		this.rootpath = rootpath;
+		StringBuilder sb = new StringBuilder();
+		for (int i = 0; i < rootpath.size() - 1; i++) {
+			sb.append(rootpath.get(i));
+			sb.append('.');
+		}
+		sb.append(rootpath.getLast());
+		this.flat_rootpath = sb.toString();
+	}
+	
+	/**
+	 * Gets number of steps in the rootpath from the root.
+	 * @return
+	 */
+	public int size() {
+		return rootpath.size();
+	}
+
+	public String get(int index) {
+		return rootpath.get(index);
+	}
+
+	public File toFile(String root_directory_absolute_path) {
+//		System.err.println(String.format("Trying to turn rootpath %s into file from root directory %s.", rootpath, root_directory_absolute_path));
+		StringBuilder sb = new StringBuilder();
+		sb.append(root_directory_absolute_path);
+		for (int i = 0; i < rootpath.size() - 1; i++) {
+			sb.append(File.separatorChar + rootpath.get(i));
+		}
+		// do the last bit
+		sb.append(File.separatorChar + rootpath.get(rootpath.size() - 1) + ".bl"); // badlang file
+//		System.err.println(String.format("Looking at %s.", sb.toString()));
+		File new_file = new File(sb.toString());
+
+		if (!new_file.exists()) {
+//			System.err.println("File didn't exist!");
+			return null;
+		}
+
+		return new_file;
+	}
+
+	@Override
+	public String toString() {
+
+		return flat_rootpath;
+	}
+
+	@Override
+	public Iterator<String> iterator() {
+		return rootpath.iterator();
+	}
+
+	public String getLast() {
+		return rootpath.getLast();
+	}
+
+	@Override
+	public boolean equals(Object other) {
+		if (other instanceof Rootpath r)
+			return flat_rootpath.equals(r.flat_rootpath);
+		return false;
+	}
+
+	@Override
+	public int hashCode() {
+		return flat_rootpath.hashCode();
+	}
+
+}

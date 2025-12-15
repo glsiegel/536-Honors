@@ -1,0 +1,293 @@
+package data;
+
+import java.util.List;
+
+import pipeline.Rootpath;
+
+/**
+ * Statement class, modified to also take in a CodeSection.
+ */
+public abstract class Stmt {
+
+	/**
+	 * The section that encapsulates the entire statement.
+	 */
+	public final CodeSection section;
+
+	/**
+	 * Constructor to allow extensions to use super keyword.
+	 * 
+	 * @param section section that encapsulates this statement
+	 */
+	public Stmt(CodeSection section) {
+		this.section = section;
+	}
+
+	public interface Visitor<R> {
+		R visitBlockStmt(Block stmt);
+
+		R visitExpressionStmt(Expression stmt);
+
+		R visitFunctionStmt(Function stmt);
+
+		R visitIfStmt(If stmt);
+
+		R visitPrintStmt(Print stmt);
+
+		R visitReturnStmt(Return stmt);
+
+		R visitVarStmt(Var stmt);
+
+		R visitAssignStmt(Assign stmt);
+
+		R visitWhileStmt(While stmt);
+
+		R visitImportStmt(Import stmt);
+
+		R visitAsStmt(As stmt);
+	}
+
+	public static record Parameter(String name, VarType type, CodeSection name_section) {
+	}
+
+	/**
+	 * Statement for import statements. These statements look like the following:
+	 * 
+	 * import edu.wisc.calls as c;
+	 * 
+	 * The rootpath is what comes between "import" and "as". This indicates where
+	 * from root to find the file. Root in this case would be the directory above
+	 * edu, whatever that may be.
+	 * 
+	 * After "as" comes the name, which is how this other file will be referenced in
+	 * this file using Indirect expressions.
+	 */
+	public static class Import extends Stmt {
+		/**
+		 * Rootpath of file to import.
+		 */
+		public final Rootpath rootpath;
+		/**
+		 * How to refer to the imported file within this file.
+		 */
+		public final String name;
+		/**
+		 * Semantic analysis. Section around the rootpath portion.
+		 */
+		public final CodeSection rootpath_section;
+		/**
+		 * Semantic analysis. Section around the name portion.
+		 */
+		public final CodeSection name_section;
+
+		public Import(Rootpath rootpath, String name, CodeSection section, CodeSection rootpath_section,
+				CodeSection name_section) {
+			super(section);
+			this.rootpath = rootpath;
+			this.name = name;
+			this.rootpath_section = rootpath_section;
+			this.name_section = name_section;
+		}
+
+		@Override
+		public <R> R accept(Visitor<R> visitor) {
+			return visitor.visitImportStmt(this);
+		}
+	}
+
+	/**
+	 * Statement that determines how THIS file relates to root. Sort of like how in
+	 * Java, files have "package" at the top. It's the same syntax.
+	 * 
+	 * as edu.wisc.main;
+	 * 
+	 * This means that, in the root directory, THIS file can be found at
+	 * root/edu/wisc/main.bl.
+	 * 
+	 * I tried REALLY hard to be able to do without these sorts of statements. After
+	 * trying though, I have a newfound appreciation for why they exist. They
+	 * simplify a lot of issues with trying to determine what "project" a file is
+	 * in.
+	 * 
+	 * C uses a totally different structure that does not require this sort of
+	 * thing, but C's structure when using multiple files sucks and I desperately
+	 * wanted to avoid all that.
+	 */
+	public static class As extends Stmt {
+		/**
+		 * The rootpath of THIS file.
+		 */
+		public final Rootpath rootpath;
+		/**
+		 * Semantic analysis. 
+		 */
+		public final CodeSection rootpath_section;
+
+		public As(Rootpath rootpath, CodeSection section, CodeSection rootpath_section) {
+			super(section);
+			this.rootpath = rootpath;
+			this.rootpath_section = rootpath_section;
+		}
+
+		@Override
+		public <R> R accept(Visitor<R> visitor) {
+			return visitor.visitAsStmt(this);
+		}
+	}
+
+	public static class Block extends Stmt {
+		public Block(List<Stmt> statements, CodeSection section) {
+			super(section);
+			this.statements = statements;
+		}
+
+		@Override
+		public <R> R accept(Visitor<R> visitor) {
+			return visitor.visitBlockStmt(this);
+		}
+
+		public final List<Stmt> statements;
+	}
+
+	public static class Expression extends Stmt {
+		public Expression(Expr expression, CodeSection section) {
+			super(section);
+			this.expression = expression;
+		}
+
+		@Override
+		public <R> R accept(Visitor<R> visitor) {
+			return visitor.visitExpressionStmt(this);
+		}
+
+		public final Expr expression;
+	}
+
+	public static class Function extends Stmt {
+		public final CodeSection function_name_section;
+
+		public Function(String name, VarType returnType, List<Parameter> params, List<Stmt> body, CodeSection section,
+				CodeSection function_name_section) {
+			super(section);
+			this.name = name;
+			this.returnType = returnType;
+			this.params = params;
+			this.body = body;
+			this.function_name_section = function_name_section;
+		}
+
+		@Override
+		public <R> R accept(Visitor<R> visitor) {
+			return visitor.visitFunctionStmt(this);
+		}
+
+		public final String name;
+		public final VarType returnType;
+		public final List<Parameter> params;
+		public final List<Stmt> body;
+	}
+
+	public static class If extends Stmt {
+		public If(Expr condition, Stmt thenBranch, Stmt elseBranch, CodeSection section) {
+			super(section);
+			this.condition = condition;
+			this.thenBranch = thenBranch;
+			this.elseBranch = elseBranch;
+		}
+
+		@Override
+		public <R> R accept(Visitor<R> visitor) {
+			return visitor.visitIfStmt(this);
+		}
+
+		public final Expr condition;
+		public final Stmt thenBranch;
+		public final Stmt elseBranch;
+	}
+
+	public static class Print extends Stmt {
+		public Print(Expr expression, CodeSection section) {
+			super(section);
+			this.expression = expression;
+		}
+
+		@Override
+		public <R> R accept(Visitor<R> visitor) {
+			return visitor.visitPrintStmt(this);
+		}
+
+		public final Expr expression;
+	}
+
+	public static class Return extends Stmt {
+		public Return(Expr value, CodeSection section) {
+			super(section);
+			this.value = value;
+		}
+
+		@Override
+		public <R> R accept(Visitor<R> visitor) {
+			return visitor.visitReturnStmt(this);
+		}
+
+		public final Expr value;
+	}
+
+	public static class Var extends Stmt {
+		public final CodeSection var_name_section;
+
+		public Var(String name, VarType type, Expr initializer, CodeSection section, CodeSection var_name_section) {
+			super(section);
+			this.name = name;
+			this.type = type;
+			this.initializer = initializer;
+			this.var_name_section = var_name_section;
+		}
+
+		@Override
+		public <R> R accept(Visitor<R> visitor) {
+			return visitor.visitVarStmt(this);
+		}
+
+		public final String name;
+		public final VarType type;
+		public final Expr initializer;
+	}
+
+	public static class Assign extends Stmt {
+		public final CodeSection var_name_section;
+
+		public Assign(String name, Expr value, CodeSection section, CodeSection var_name_section) {
+			super(section);
+			this.name = name;
+			this.value = value;
+			this.var_name_section = var_name_section;
+		}
+
+		@Override
+		public <R> R accept(Visitor<R> visitor) {
+			return visitor.visitAssignStmt(this);
+		}
+
+		public final String name;
+		public final Expr value;
+	}
+
+	public static class While extends Stmt {
+		public While(Expr condition, Stmt body, CodeSection section) {
+			super(section);
+			this.condition = condition;
+			this.body = body;
+		}
+
+		@Override
+		public <R> R accept(Visitor<R> visitor) {
+			return visitor.visitWhileStmt(this);
+		}
+
+		public final Expr condition;
+		public final Stmt body;
+	}
+
+	public abstract <R> R accept(Visitor<R> visitor);
+}

@@ -1,0 +1,5 @@
+as second;
+
+import third as t;
+
+int y = t.x; // checker invalidates this due to infinite loop possibility

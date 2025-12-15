@@ -1,0 +1,134 @@
+package edu.pipeline;
+
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
+
+import data.IdentifierInfo;
+import data.Stmt;
+import env.GlobalEnvironment;
+
+//ugh
+// needs to track files so we know when we need to re-evaluate their contents
+// needs to track file paths and rootpath of files
+
+/**
+ * Structure which tracks information about files, including when they were last
+ * evaluated and the results of their evaluations.
+ * 
+ * @param <T> The type to store in the global environment. Why is this even
+ *            needed? Well, the Checker cares about VarType and the Interpreter
+ *            cares about Object. This way, by specifying T as either VarType or
+ *            Object, we can use this for multiple purposes.
+ */
+public class FileInfo<T> {
+
+	/**
+	 * The last time (in long format) that this was evaluated. This lets us check if
+	 * the file has been updated since last evaluation. An evaluation consists of
+	 * running the lexer, parser, and global builder on the file. TODO should
+	 * checker be here too?
+	 */
+	private long timeEvaluated;
+	/**
+	 * The associated file.
+	 */
+	public final File file;
+	/**
+	 * List of the statements generated from the lexer-parser pipeline. Note that
+	 * this may be garbage if the entry is expired.
+	 */
+	private List<Stmt> statements = null;
+	/**
+	 * The global environment generated from the statements. Note that this may be
+	 * garbage if the entry is expired.
+	 */
+	private GlobalEnvironment<T> globals = null;
+
+	/**
+	 * The errors accrued by this file.
+	 */
+	private List<error.IError> errors = null;
+
+	/**
+	 * Info for the semantic tokens.
+	 */
+	private List<IdentifierInfo> identifierInfos = null;
+
+	/**
+	 * Whether the file is opened in the editor or not. If all FileInfos for a
+	 * FileManager aren't opened, we can safely remove them.
+	 */
+	public boolean opened = false;
+	// if all files in this filemanager aren't opened, we can safely remove it.
+
+	public FileInfo(long timeEvaluated, File file, boolean opened) {
+		this.timeEvaluated = timeEvaluated;
+		this.file = file;
+		this.opened = opened;
+	}
+
+	@Override
+	public String toString() {
+		return String.format("%s: Expired? %s", file.getName(), file.lastModified() > timeEvaluated);
+	}
+
+	public void evaluate(List<error.IError> errors) {
+		evaluate(errors, null, null, null);
+	}
+
+	public void evaluate(List<error.IError> errors, List<Stmt> stmts) {
+		evaluate(errors, stmts, null, null);
+	}
+
+	public void evaluate(List<error.IError> errors, List<Stmt> stmts, GlobalEnvironment<T> env) {
+		evaluate(errors, stmts, env, null);
+	}
+
+	/**
+	 * Updates the time updated and all the associated values of a file's internal
+	 * data storage.
+	 * 
+	 * @param errors     NON-NULL
+	 * @param stmts      nullable
+	 * @param env        nullable
+	 * @param ranChecker
+	 */
+	public void evaluate(List<error.IError> errors, List<Stmt> stmts, GlobalEnvironment<T> env,
+			List<IdentifierInfo> identifiers) {
+		this.timeEvaluated = System.currentTimeMillis();
+		this.statements = stmts;
+		this.globals = env;
+		this.identifierInfos = identifiers;
+		this.errors = errors;
+	}
+
+	public List<Stmt> getStatements() {
+		return statements;
+	}
+
+	public GlobalEnvironment<T> getGlobals() {
+		return globals;
+	}
+
+	public boolean isExpired() {
+		return file.lastModified() >= timeEvaluated;
+	}
+
+	public List<error.IError> getErrors() {
+		return this.errors;
+	}
+
+	public void addToErrors(List<error.IError> new_errors) {
+		if (this.errors == null) {
+			this.errors = new ArrayList<>();
+
+		}
+		this.errors.addAll(new_errors);
+	}
+
+	public List<IdentifierInfo> getIdentifiers() {
+		return this.identifierInfos;
+	}
+
+}

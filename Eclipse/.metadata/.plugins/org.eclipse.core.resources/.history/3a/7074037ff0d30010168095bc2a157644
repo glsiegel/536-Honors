@@ -1,0 +1,106 @@
+package pipeline;
+
+import java.io.File;
+import java.util.HashSet;
+import java.util.Set;
+
+import data.VarType;
+
+/**
+ * A server should hold onto a FileManagerSet. A file manager set contains a
+ * bunch of file managers. Its main functionality is to be provided with a
+ * rootpath and get the associated file manager. This can be passed to the
+ * checker to figure out its associated file manager. Additionally, it lets us
+ * easily check for & remove unneeded file managers.
+ */
+public class FileManagerSet {
+	private final Set<FileManager<VarType>> fileManagers;
+
+	public FileManagerSet() {
+		fileManagers = new HashSet<>();
+	}
+
+	public void add(FileManager<VarType> m) {
+		fileManagers.add(m);
+	}
+
+	/**
+	 * TODO Should remove all file managers from the set that aren't worth their
+	 * salt.
+	 */
+	public void checkWorthlessAndCleanup(FileManager<VarType> manager) {
+		if (manager.isWorthless()) {
+			
+			System.err.println("Manager is worthless, closing it.");
+			fileManagers.remove(manager);
+		}
+	}
+
+	public void closeFile(File f) {
+		for (FileManager<VarType> manager : fileManagers) {
+			if (!manager.isRootOf(f))
+				continue;
+			Rootpath predicted_root_path = manager.getRootpathOf(f);
+			if (!manager.has(predicted_root_path))
+				continue;
+			manager.close(predicted_root_path);
+			checkWorthlessAndCleanup(manager);
+		}
+	}
+	
+	public void removeSingletonFromManagers(File f) {
+		FileManager<VarType> found_manager = null;
+		for (FileManager<VarType> manager : fileManagers) {
+			if (!manager.isRootOf(f)) continue;
+			
+			Rootpath rp = manager.getRootpathOf(f);
+			if (manager.has(rp)) {
+				// remove it
+				
+				manager.removeFile(rp);
+				
+				
+				if (manager.isWorthless()) {
+					found_manager = manager;
+					break;
+				}
+			}
+		}
+		if (found_manager != null && found_manager.isWorthless()) {
+			System.err.println("Manager is worthless, closing it.");
+			fileManagers.remove(found_manager);
+		}
+	}
+
+	/**
+	 * Gets the FileManager that this rootpath points to. Note that the FileManager
+	 * does not have to actually have the rootpath registered. If no FileManager
+	 * exists, returns null.
+	 * 
+	 * @param rootpath
+	 * @param f
+	 * @return
+	 */
+	public FileManager<VarType> getOughtManager(Rootpath rootpath, File f) {
+		for (FileManager<VarType> manager : fileManagers) {
+			if (manager.isRootOf(rootpath, f))
+				return manager;
+		}
+		return null;
+	}
+
+	/**
+	 * Gets the FileManager that has this rootpath registered. If no FileManager has
+	 * this rootpath registered, then returns null.
+	 * 
+	 * @param rootpath
+	 * @return
+	 */
+	public FileManager<VarType> getIsManager(Rootpath rootpath) {
+		for (FileManager<VarType> manager : fileManagers) {
+			if (manager.has(rootpath))
+				return manager;
+		}
+		return null;
+	}
+}

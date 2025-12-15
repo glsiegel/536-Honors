@@ -1,0 +1,16 @@
+package error;
+
+import data.CodeSection;
+
+/**
+ * Generic error type
+ */
+public abstract class IError {
+	public final CodeSection section;
+	public final String message;
+	
+	public IError(CodeSection section, String message) {
+		this.section = section;
+		this.message = message;
+	}
+}

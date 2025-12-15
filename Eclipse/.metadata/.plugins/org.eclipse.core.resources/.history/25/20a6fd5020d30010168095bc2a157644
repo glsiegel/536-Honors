@@ -1,0 +1,24 @@
+package edu.pipeline;
+
+import java.util.List;
+
+import checker.checkers.Checker;
+import edu.data.Stmt;
+import edu.lexer.Lexer;
+import edu.parser.Parser;
+
+public class StatementData {
+
+	public final List<Stmt> statements;
+	public final List<edu.error.IError> errors;
+	public final Rootpath rootpath;
+	
+	public StatementData(List<Stmt> statements, List<edu.error.IError> errors, Rootpath rootpath) {
+		this.statements = statements;
+		this.errors = errors;
+		this.rootpath = rootpath;
+	}
+	public StatementData(List<Stmt> statements, List<edu.error.IError> errors) {
+		this(statements, errors, null);
+	}
+}

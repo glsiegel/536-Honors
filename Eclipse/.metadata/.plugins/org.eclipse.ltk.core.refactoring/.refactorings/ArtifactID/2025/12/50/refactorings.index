@@ -1,0 +1,33 @@
+1765074320154	Delete element
+1765074331421	Move compilation unit
+1765074402231	Rename type 'Error'
+1765074488444	Rename type 'TypeFailure'
+1765074510985	Rename type 'CheckerError'
+1765074585601	Rename field 'typeFailures'
+1765074598780	Rename field 'typeFailures'
+1765076217416	Copy compilation units
+1765077015548	Rename type 'FileManager'
+1765077395357	Delete element
+1765077640434	Delete element
+1765077661354	Move compilation units
+1765077920048	Rename type 'GlobalBuilder'
+1765077991457	Rename type 'GlobalBuilder'
+1765078012187	Rename type 'GlobalEnvironment'
+1765078022485	Rename type 'LocalEnvironment'
+1765078922589	Delete element
+1765078928648	Delete element
+1765078933700	Delete element
+1765079574751	Rename field 'typeFailures'
+1765092786274	Delete element
+1765141746141	Delete element
+1765141752301	Delete element
+1765141764703	Rename package 'checker.checkers'
+1765141771143	Rename package 'edu.data'
+1765141781960	Rename package 'edu.error'
+1765141797272	Rename package 'visitor.env'
+1765141804431	Rename package 'edu.parser'
+1765141820580	Rename package 'edu.lexer'
+1765141827073	Rename package 'edu.pipeline'
+1765142879932	Rename field 'visitorFailures'
+1765144368714	Delete element
+1765169273453	Delete element

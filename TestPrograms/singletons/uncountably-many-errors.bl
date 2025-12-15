@@ -1,0 +1,7 @@
+int x = a && b || c && d + x * y / z / (a*x+b) - - 5 == 2002;
+frog(5,10,15,20,25,true,false);
+while (a>=b || c <= d || true != false || !true == a*b*c) {
+    print x;
+    a = a + 50;
+    b = ! b;
+}

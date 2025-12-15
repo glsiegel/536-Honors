@@ -1,0 +1,208 @@
+package edu.pipeline;
+
+import java.io.File;
+import java.util.List;
+
+import checker.checkers.Checker;
+import edu.data.Stmt;
+import edu.data.TerminationException;
+import edu.data.Token;
+import edu.lexer.Lexer;
+import edu.parser.Parser;
+
+public class Pipeline {
+	/**
+	 * Performs the Lexer - Parser - Checker pipeline. Necessary for building the
+	 * AST and getting the globals for imports. Given a file and a list of file
+	 * managers, will try to determine which manager is the root of the given file.
+	 * If none are the root, then it will give an PipelineData object with a FILE
+	 * error. If one is the root, then it will run the pipeline. Note that contents
+	 * is an optional parameter. This can be null. If it is null, then the contents
+	 * of the file are used for the pipeline. If it is not null, then the file's
+	 * contents are used. This option exists because we often want to check a file
+	 * that we're actively editing.
+	 * 
+	 * @param file the file to perform the pipeline on
+	 * @param fileManagers the list of file managers to search for root
+	 * @param contents (optional) the string contents of the file
+	 * @return PipelineData
+	 */
+	public static PipelineData pipe(File file, FileManager fm, String contents) {
+
+		System.err.println("PIPING!");
+		Lexer lexer = new Lexer();
+		System.err.println(" = Lexer");
+		try {
+			if (contents == null) {
+				lexer.runOnFile(file.getAbsolutePath());
+			} else {
+				lexer.runOnString(contents);
+			}
+
+		} catch (TerminationException e) {
+			System.err.println(" -- LEXER FAIL");
+			return new PipelineData(lexer, null, null, PipelineData.PipelineError.LEXER);
+
+		}
+
+		List<Token> token_list = lexer.tokenList;
+		Parser parser = new Parser(token_list);
+		System.err.println(" = Parser");
+
+		try {
+
+			parser.run();
+		} catch (TerminationException e) {
+			System.err.println(" -- PARSER FAIL");
+			return new PipelineData(lexer, parser, null, PipelineData.PipelineError.PARSER);
+		}
+
+		List<Stmt> statements = parser.statements;
+		
+		Checker checker;
+		
+		System.err.println(" = Checker");
+		// now, do checker
+		
+		
+		if (parser.hasAs()) {
+			// use import methods
+			Rootpath rootpath = parser.getRootpath();
+			checker = new Checker(rootpath, fm);
+		} else {
+			// use other methods
+			checker = new Checker();
+		}
+
+		for (Stmt statement : statements) {
+			statement.accept(checker);
+		}
+
+		if (!checker.typeFailures.isEmpty()) {
+			System.err.println(" -- CHECKER FAIL");
+			return new PipelineData(lexer, parser, checker, PipelineData.PipelineError.CHECKER);
+		}
+		
+		System.err.println(" = NO ERROR!");
+		return new PipelineData(lexer, parser, checker);
+	}
+	public static PipelineData pipe(File file, FileManagerSet fmset, String contents, boolean opened) {
+		
+		System.err.println("PIPING!");
+		Lexer lexer = new Lexer();
+		System.err.println(" = Lexer");
+		try {
+			if (contents == null) {
+				lexer.runOnFile(file.getAbsolutePath());
+			} else {
+				lexer.runOnString(contents);
+			}
+
+		} catch (TerminationException e) {
+			System.err.println(" -- LEXER FAIL");
+			return new PipelineData(lexer, null, null, PipelineData.PipelineError.LEXER);
+
+		}
+
+		List<Token> token_list = lexer.tokenList;
+		Parser parser = new Parser(token_list);
+		System.err.println(" = Parser");
+
+		try {
+
+			parser.run();
+		} catch (TerminationException e) {
+			System.err.println(" -- PARSER FAIL");
+			return new PipelineData(lexer, parser, null, PipelineData.PipelineError.PARSER);
+		}
+
+		List<Stmt> statements = parser.statements;
+		
+		Checker checker;
+		
+		System.err.println(" = Checker");
+		// now, do checker
+		
+		
+		if (parser.hasAs()) {
+			// use import methods
+			Rootpath rootpath = parser.getRootpath();
+			
+			// now, determine which FileManager corresponds to this one.
+			FileManager foundManager = fmset.getOughtManager(rootpath, file);
+			if (foundManager == null) {
+				// need to make a new one then
+				foundManager = new FileManager(rootpath, file);
+				fmset.add(foundManager);
+				foundManager.importFile(rootpath, opened);
+			}
+			
+			checker = new Checker(rootpath, foundManager);
+		} else {
+			// use other methods
+			checker = new Checker();
+		}
+
+		for (Stmt statement : statements) {
+			statement.accept(checker);
+		}
+
+		if (!checker.typeFailures.isEmpty()) {
+			System.err.println(" -- CHECKER FAIL");
+			return new PipelineData(lexer, parser, checker, PipelineData.PipelineError.CHECKER);
+		}
+		
+		System.err.println(" = NO ERROR!");
+		return new PipelineData(lexer, parser, checker);
+
+	}
+	
+	/**
+	 * Pipe for singleton. No root, no imports, no indirection.
+	 * @param contents
+	 * @return
+	 */
+	public static PipelineData pipe(String contents) {
+		// TODO deal with this repeat code.
+		System.err.println("PIPING!");
+		Lexer lexer = new Lexer();
+		System.err.println(" = Lexer");
+		try {
+			lexer.runOnString(contents);
+
+		} catch (TerminationException e) {
+			System.err.println(" -- LEXER FAIL");
+			return new PipelineData(lexer, null, null, PipelineData.PipelineError.LEXER);
+
+		}
+
+		List<Token> token_list = lexer.tokenList;
+		Parser parser = new Parser(token_list);
+		System.err.println(" = Parser");
+
+		try {
+
+			parser.run();
+		} catch (TerminationException e) {
+			System.err.println(" -- PARSER FAIL");
+			return new PipelineData(lexer, parser, null, PipelineData.PipelineError.PARSER);
+		}
+
+		List<Stmt> statements = parser.statements;
+
+		System.err.println(" = Checker");
+		// now, do checker
+		Checker checker = new Checker();
+
+		for (Stmt statement : statements) {
+			statement.accept(checker);
+		}
+
+		if (!checker.typeFailures.isEmpty()) {
+			System.err.println(" -- CHECKER FAIL");
+			return new PipelineData(lexer, parser, checker, PipelineData.PipelineError.CHECKER);
+		}
+		System.err.println(" = NO ERROR!");
+		return new PipelineData(lexer, parser, checker);
+	}
+}

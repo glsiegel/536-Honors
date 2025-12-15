@@ -1,0 +1,12 @@
+package edu.error;
+
+import edu.data.CodeSection;
+
+public class LexerError extends edu.error.IError {
+    public LexerError(CodeSection section, String msg) {
+    		super(section, msg);
+    }
+    public LexerError(int line, int offset, String msg) {
+    		super(new CodeSection(line, offset, line, offset), msg);
+    }
+}

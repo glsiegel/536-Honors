@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<section name="Workbench">
+	<item key="hasShownOverlayPopupBefore" value="true"/>
+	<section name="java.lang.Class">
+		<item key="replaceBarOpen" value="true"/>
+		<list key="findhistory">
+			<item value="visitFunct"/>
+			<item value="globals."/>
+			<item value="globals.put"/>
+			<item value="visitFunc"/>
+			<item value="Function name "/>
+			<item value="visitCallExpr"/>
+			<item value="runStaticCheck"/>
+			<item value="System.err.println"/>
+			<item value="System.out.println"/>
+			<item value="rootpaths_to_pu"/>
+			<item value="server.pendingSemanticReq"/>
+			<item value="didOpen("/>
+			<item value="toUri("/>
+			<item value="pendingSemanticRequest"/>
+			<item value="getUri("/>
+		</list>
+		<list key="replacehistory">
+			<item value="LocalEnvironment&lt;Object&gt;"/>
+			<item value="start_char_offset"/>
+			<item value="start_char_line"/>
+		</list>
+	</section>
+</section>

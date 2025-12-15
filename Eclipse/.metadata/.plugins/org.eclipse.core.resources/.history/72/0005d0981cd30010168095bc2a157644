@@ -1,0 +1,176 @@
+package interpreter;
+
+import java.util.HashMap;
+
+import interpreter.IEnvironment;
+import edu.data.Stmt;
+import edu.data.VarType;
+
+public class LocalEnvironment implements IEnvironment {
+
+	private final IEnvironment parent;
+	/**
+	 * Mappings from the identifier to the type.
+	 */
+	private final HashMap<String, Object> store = new HashMap<>();
+	private final int depth; // level of scope. global = 0. counts upwards.
+	private final boolean function; // flag used to determine whether this env is in a fcn
+	private boolean shouldExit = false; // only used if a fcn
+
+
+	/**
+	 * Construct offshoot environments, different scope.
+	 * 
+	 * @param depth  the depth of the environment, with global having 0. the first
+	 *               block has depth 1, then depth 2, etc.
+	 * @param parent the parent environment to this one.
+	 */
+	public LocalEnvironment(IEnvironment parent) {
+		this.parent = parent;
+		this.depth = parent.getDepth() + 1;
+		// since function parameter not given, will use parent's function parameter
+		this.function =  parent.isFunction();
+	}
+	
+	/**
+	 * Constructs a function environment.
+	 * The boolean is only for disambiguation. Worthless result.
+	 * @param parent
+	 * @param is_function
+	 */
+	public LocalEnvironment(IEnvironment parent, boolean is_function) {
+		this.parent = parent;
+		this.depth = parent.getDepth() + 1;
+		// since function parameter not given, will use parent's function parameter
+		this.function =  true;
+	}
+
+	/**
+	 * Determines whether there is an entry in this environment or any of its
+	 * parents for the given name.
+	 * 
+	 * @param name name to check
+	 * @return true if the key exists somewhere here or upward in the hierarchy,
+	 *         false otherwise.
+	 */
+	@Override
+	public boolean has(String name) {
+
+		boolean thisHas = store.containsKey(name);
+		// if this has it, return true.
+		// if this doesn't have it, check if it has a parent.
+		// if there's no parent, then just return false.
+		// if there is a parent, then recurse onto the parent.
+		return thisHas || (parent == null ? false : parent.has(name));
+
+	}
+
+	/**
+	 * Puts a value to a variable that is NEW to the environment. This is like
+	 * saying "int x = 5": it puts the value 5 at "x". Note that this method will
+	 * get angry if you try to put a name that already exists at this scope. You can
+	 * overload something from a parent scope, but you CANNOT redefine a variable
+	 * within the same scope.
+	 * 
+	 * @param name
+	 * @param val
+	 * @return false if the variable already exists at the scope, true if it does
+	 *         not
+	 */
+	@Override
+	public boolean put(String name, Object val) {
+		if (store.containsKey(name)) {
+			// cannot use this method if the current scope already has an identifier
+			// for that name.
+			return false;
+		}
+		store.put(name, val);
+		return true;
+	}
+
+	/**
+	 * Assigns a value to a variable that is already in the environment.
+	 * 
+	 * @param name
+	 * @param val
+	 */
+	public boolean assign(String name, Object val) {
+		// we need to find the highest scope identifier that is in the environment.
+		// like how we can override a variable in a more nested scope.
+
+		// case 1: check if the identifier exists at this level
+		if (store.containsKey(name)) {
+			Object prevVal = store.get(name);
+
+			// verify that the new value does not change the type of the identifier
+			if (!prevVal.getClass().equals(val.getClass())) {
+				return false;
+			}
+			store.put(name, val); // replace the value
+
+			// case 2: check if we have a parent to recurse to
+		} else if (parent == null) {
+			// if there is no parent, and it was not at this level, then the identifier
+			// does not exist in the environment.
+			return false;
+
+			// case 3: recurse to the parent
+		} else {
+			return parent.assign(name, val);
+		}
+		return false;
+	}
+
+	/**
+	 * Generally gets the object associated with the identifier. Scope-aware. Gets
+	 * the most nested value for the identifier.
+	 * 
+	 * @param name name of the identifier
+	 * @return the associated object
+	 */
+	@Override
+	public Object get(String name) {
+		// if it's at this level, return its value.
+		if (store.containsKey(name))
+			return store.get(name);
+		// otherwise, try to recurse.
+		else {
+			if (parent == null)
+				throw new RuntimeException("Environment does not have object '" + name + "'.");
+			return parent.get(name);
+		}
+	}
+
+	/**
+	 * Determines whether the scope is a function or is a child scope of a function.
+	 * 
+	 * @return
+	 */
+	@Override
+	public boolean isFunction() {
+		return function;
+	}
+
+	/**
+	 * Gets the depth of the scope. Globals are at 0, the next level is 1, then 2,
+	 * and so on. Higher depth means more nested scope.
+	 * 
+	 * @return
+	 */
+	@Override
+	public int getDepth() {
+		return depth;
+	}
+
+	public boolean shouldExit() {
+		return shouldExit;
+	}
+
+	public void setShouldExit() {
+		shouldExit = true;
+		if (parent instanceof LEBad loc) {
+			loc.setShouldExit();
+		}
+	}
+
+}

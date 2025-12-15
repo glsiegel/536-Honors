@@ -1,0 +1,3 @@
+int yep = 20;
+
+print yep;

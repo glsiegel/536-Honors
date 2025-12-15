@@ -1,0 +1,299 @@
+package edu.parser;
+
+import java.util.List;
+
+import data.Expr;
+import data.Stmt;
+import data.Expr.Indirect;
+import data.Stmt.As;
+import data.Stmt.Import;
+
+public class PrettyPrinter implements Expr.Visitor<String>, Stmt.Visitor<String> {
+    public String print(Expr expr) {
+        if (expr == null) 
+            throw new IllegalArgumentException("Cannot print null expression.");
+        
+        return expr.accept(this);
+    }
+
+    public String print(Stmt stmt) {
+        if (stmt == null) 
+            throw new IllegalArgumentException("Cannot print null statement.");
+        return stmt.accept(this);
+    }
+
+    @Override
+    public String visitBinaryExpr(Expr.Binary expr) {
+        if (expr == null)
+            throw new IllegalArgumentException("Cannot visit null expression.");
+        // need this extra error checking
+        if (expr.left == null || expr.right == null) 
+            throw new IllegalArgumentException(
+                "Cannot visit a binary expression containing null expressions."
+            );
+        if (expr.operator == null)
+            throw new IllegalArgumentException("Unary lacks operator.");
+        
+
+        // define the list of expressions which do not necessitate adding
+        // the parentheses to either end.
+        // this is important because we want the order of operations to be clear
+        // yet we don't want to use parentheses when they're not helpful.
+        // though this is imperfect, as it will add parentheses with some
+        // associative operations, this is good enough.
+        List<Class<?>> whitelist = List.of(Expr.Literal.class, Expr.Variable.class, Expr.Call.class);
+        // Example: (left operator right)
+        String leftHalf;
+        String rightHalf;
+        // if the left doesn't need parentheses, just print it
+        if (whitelist.contains(expr.left.getClass()))
+            leftHalf = print(expr.left);
+        else
+            // otherwise, put parentheses
+            leftHalf = '(' + print(expr.left) + ')';
+        // if the right doesnt need parentheses, just print it
+        if (whitelist.contains(expr.right.getClass()))
+            rightHalf = print(expr.right);
+        else
+            // otherwise, put parentheses
+            rightHalf = '(' + print(expr.right) + ')';
+        
+        
+        // stitch together
+        return leftHalf + ' ' + expr.operator.getSymbol() + ' ' + rightHalf;
+    }
+
+    @Override
+    public String visitLiteralExpr(Expr.Literal expr) {
+        if (expr == null)
+            throw new IllegalArgumentException("Cannot visit null expression.");
+        if (expr.value == null) {
+            throw new IllegalArgumentException("Literal has null value.");
+        }
+        return expr.value.toString();
+    }
+
+    @Override
+    public String visitUnaryExpr(Expr.Unary expr) {
+        // Example: !flag or -x
+        if (expr == null)
+            throw new IllegalArgumentException("Cannot visit null expression.");
+        if (expr.right == null)
+            throw new IllegalArgumentException("Expression in unary is null.");
+        if (expr.operator == null)
+            throw new IllegalArgumentException("Unary lacks operator.");
+        return expr.operator.getSymbol() + print(expr.right);
+    }
+
+    @Override
+    public String visitVariableExpr(Expr.Variable expr) {
+        if (expr == null)
+            throw new IllegalArgumentException("Cannot visit null expression.");
+        return expr.name;
+    }
+
+    @Override
+    public String visitCallExpr(Expr.Call expr) {
+        // Example: functionName(arg1, arg2, arg3)
+
+        if (expr == null)
+            throw new IllegalArgumentException("Cannot visit null expression.");
+        if (expr.name == null)
+            throw new IllegalArgumentException("Function to call is null.");
+        String callStr = expr.name + "(";
+
+
+        List<Expr> args = expr.arguments;
+        if (args == null || args.isEmpty())
+            return callStr + ')'; // just write "callee()"
+        
+        for (Expr argExpr : args) {
+            callStr += print(argExpr);
+            callStr += ", ";
+        }
+        callStr = callStr.substring(0, callStr.length() - 2); // remove last ", "
+        callStr += ')';
+        return callStr;
+    }
+
+    @Override
+    public String visitReturnStmt(Stmt.Return stmt) {
+        // Example: return expression; or return;
+        if (stmt == null)
+            throw new IllegalArgumentException("Cannot visit null statement.");
+        if (stmt.value == null)
+            return "return;\n";
+        return "return " + print(stmt.value) + ";\n";
+        
+    }
+
+    @Override
+    public String visitPrintStmt(Stmt.Print stmt) {
+        // Example: print expression;
+        if (stmt == null)
+            throw new IllegalArgumentException("Cannot visit null statement.");
+        return "print " + print(stmt.expression) + ";\n";
+    }
+
+    @Override
+    public String visitBlockStmt(Stmt.Block stmt) {
+        // Example:
+        // {
+        //   statement1;
+        //   statement2;
+        // }
+        if (stmt == null)
+            throw new IllegalArgumentException("Cannot visit null statement."); 
+        String blockStr = "{\n";
+        List<Stmt> statements = stmt.statements;
+        if (statements != null)
+            for (Stmt nestedStmt : statements) {
+                blockStr += indentStatement(nestedStmt);
+            }
+        blockStr += "}\n";
+        return blockStr;
+    }
+
+    @Override
+    public String visitIfStmt(Stmt.If stmt) {
+        // Example: if (condition) thenBranch else elseBranch
+        if (stmt == null)
+            throw new IllegalArgumentException("Cannot visit null statement.");
+
+        String ifStr = "if (" + print(stmt.condition) + ") "; // make the condition part
+
+        // if the then branch is a block, then just print the block
+        if (stmt.thenBranch instanceof Stmt.Block) {
+            String thenStr = print(stmt.thenBranch);
+            ifStr += thenStr.substring(0, thenStr.length() - 1);
+            // need to remove last character because it is a newline character
+        }
+        else 
+            // otherwise, make our own "block".
+            ifStr += "{\n" + indentStatement(stmt.thenBranch) + "}";
+        
+
+        if (stmt.elseBranch == null)
+            return ifStr + "\n";
+            // need to terminate with newline if there's nothing after this
+
+        ifStr += " else ";
+
+        // if elseBranch is a block, just add the block (including newline)
+        if (stmt.elseBranch instanceof Stmt.Block)
+            ifStr += print(stmt.elseBranch);
+
+        // otherwise, we have to make our own "block"
+        else ifStr += "{\n" + indentStatement(stmt.elseBranch) + "}\n";
+        return ifStr;
+    }
+
+    @Override
+    public String visitVarStmt(Stmt.Var stmt) {
+        // Example: int variableName = initialValue; or bool flag;
+        if (stmt == null)
+            throw new IllegalArgumentException("Cannot visit null statement.");
+        if (stmt.type == null)
+            throw new IllegalArgumentException("Variable statement cannot have null type.");
+        if (stmt.initializer != null)
+            return stmt.type.toString().toLowerCase() + " " + stmt.name + " = " + print(stmt.initializer) + ";\n";
+        else
+            return stmt.type.toString().toLowerCase() + " " + stmt.name + ";\n";
+    }
+
+    @Override
+    public String visitWhileStmt(Stmt.While stmt) {
+        // Example: while (condition) body
+        if (stmt == null)
+            throw new IllegalArgumentException("Cannot visit null statement.");
+
+        String whileStr = "while (" + print(stmt.condition) + ") " + print(stmt.body);
+        return whileStr;
+    }
+
+    @Override
+    public String visitExpressionStmt(Stmt.Expression stmt) {
+        // Example: expression;
+        if (stmt == null)
+            throw new IllegalArgumentException("Cannot visit null statement.");
+        return print(stmt.expression) + ";\n";
+    }
+
+    @Override
+    public String visitFunctionStmt(Stmt.Function stmt) {
+        // Example:
+        // fun int functionName(int param1, bool param2) {
+        //   body statements
+        // }
+        if (stmt == null)
+            throw new IllegalArgumentException("Cannot visit null statement.");
+        if (stmt.returnType == null)
+            throw new IllegalArgumentException("Function statement cannot have null return type.");
+        String fcnString = "fun " + stmt.returnType.toString().toLowerCase();
+        fcnString += " " + stmt.name;
+
+        List<Stmt.Parameter> params = stmt.params;
+        if (params == null || params.isEmpty())
+            fcnString += "() {\n";
+        else {
+            String paramString = "";
+            for (Stmt.Parameter param : params) {
+                if (param.type() == null) {
+                    throw new IllegalArgumentException("Parameter cannot have null type.");
+                }
+                paramString += param.type().toString().toLowerCase() + " " + param.name() + ", ";
+            }
+            paramString = paramString.substring(0, paramString.length() - 2); // remove the last ", "
+            fcnString += "(" + paramString + ") {\n";
+        }
+
+        List<Stmt> body = stmt.body;
+        if (body != null)
+            for (Stmt nestedStmt : body) {
+             fcnString += indentStatement(nestedStmt);
+            }
+        fcnString += "}\n";
+        return fcnString;
+    }
+
+    @Override
+    public String visitAssignStmt(Stmt.Assign stmt) {
+        // Example: variableName = expression;
+        if (stmt == null)
+            throw new IllegalArgumentException("Cannot visit null statement.");
+        return stmt.name + " = " + print(stmt.value) + ";\n";
+    }
+
+    /**
+     * Helper method to indent the line(s) of a statement
+     * @param stmt
+     * @return the statement with one added indentation
+     */
+    private String indentStatement(Stmt stmt) {
+        String[] lines = print(stmt).split("\n");
+        String indentAdded = "";
+        for (String line : lines) {
+            indentAdded += "  " + line + '\n';
+        }
+        return indentAdded;
+    }
+
+	@Override
+	public String visitImportStmt(Import stmt) {
+		String importStr = String.format("import %s as %s;", stmt.rootpath, stmt.name);
+		// TODO Auto-generated method stub
+		return importStr;
+	}
+
+	@Override
+	public String visitIndirectExpr(Indirect expr) {
+		String right = print(expr.indirect);
+		// TODO Auto-generated method stub
+		return String.format("%s.%s", expr.source, right);
+	}
+
+	@Override
+	public String visitAsStmt(As stmt) {
+		return String.format("as %s;", stmt.rootpath);
+	}
+} 

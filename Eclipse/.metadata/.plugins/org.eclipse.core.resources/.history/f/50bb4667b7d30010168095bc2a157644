@@ -1,0 +1,9 @@
+package data;
+
+public enum VarType {
+	NONE,
+    INT,
+    BOOL
+}
+
+

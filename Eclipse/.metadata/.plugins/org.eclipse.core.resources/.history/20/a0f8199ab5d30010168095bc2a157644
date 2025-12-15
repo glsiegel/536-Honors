@@ -1,0 +1,52 @@
+package data;
+
+/**
+ * Stores the relevant information about an identifier for semantic analysis.
+ */
+public class IdentifierInfo {
+
+	/**
+	 * Array of kinds mapping. The strings seen here are special VSCode keywords
+	 * that dictate coloring. Use the kindIdx to index into this array.
+	 */
+	public static final String[] KINDS = { "enum", // global vars
+			"parameter", // parameters in the function defn (was parameter
+			"parameter", // when parameters are used in the function ( was parameter)
+			"variable", // none of the above ( was variable)
+			"function" // when it's a function i guess
+	};
+	/**
+	 * Semantic analysis also allows for coloring modifiers, and coloring
+	 * differently depending on modifiers (like final int x is different than just
+	 * int x). Since badlang does not have modifiers, this is empty.
+	 */
+	public static final String[] MODIFIERS = {};
+
+	/**
+	 * String name of the identifier.
+	 */
+	public final String name;
+	/**
+	 * Index into kind array, determines which color to use based on user's theme.
+	 */
+	public final int kindIdx;
+	/**
+	 * 
+	 */
+	public final int startLine;
+	public final int startChar;
+	public final int length;
+
+	public IdentifierInfo(String name, int kindIdx, int startLine, int startChar, int length) {
+		this.name = name;
+		this.kindIdx = kindIdx;
+		this.startLine = startLine;
+		this.startChar = startChar;
+		this.length = length;
+	}
+
+	@Override
+	public String toString() {
+		return String.format("%s (%d) line %d offset %d kind %s", name, length, startLine, startChar, KINDS[kindIdx]);
+	}
+}

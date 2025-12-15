@@ -1,0 +1,234 @@
+package interpreter;
+
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FilenameFilter;
+import java.io.IOException;
+import java.util.List;
+import java.util.Map;
+
+import edu.data.Stmt;
+import edu.pipeline.FileManagerException;
+import edu.pipeline.Rootpath;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedList;
+
+public class FileManagerBAD {
+	private final File root_directory;
+	private final HashMap<Rootpath, FileInfo> fileMap;
+
+	// ugh
+	// needs to track files so we know when we need to re-evaluate their contents
+	// needs to track file paths and rootpath of files
+	private static class FileInfo {
+		public final File file;
+		public final Rootpath rootpath;
+		public GlobalEnvironment globals;
+		
+		// if all files in this filemanager aren't opened, we can safely remove it.
+
+		public FileInfo(File file, Rootpath rootpath, GlobalEnvironment globals) {
+			this.file = file;
+			this.rootpath = rootpath;
+			this.globals = globals;
+		}
+
+		@Override
+		public String toString() {
+			return String.format("%s @ %s", file.getName(), rootpath);
+		}
+
+	}
+
+	@Override
+	public String toString() {
+		StringBuilder sb = new StringBuilder();
+		sb.append("Root directory: ");
+		sb.append(root_directory.getAbsolutePath());
+		sb.append('\n');
+		for (Map.Entry<Rootpath, FileInfo> entry : fileMap.entrySet()) {
+			sb.append(" + ");
+			sb.append(entry.getKey());
+			sb.append(": ");
+			sb.append(entry.getValue());
+			sb.append('\n');
+		}
+		return sb.toString();
+	}
+//
+//	private File find_root_directory_from_file(String current_file_name) throws FileNotFoundException {
+//		File current_file = new File(current_file_name);
+//		if (!current_file.exists()) {
+//			throw new FileNotFoundException("Given file does not exist.");
+//		}
+//		if (!current_file.isDirectory()) {
+//			current_file = current_file.getParentFile();
+//			if (current_file == null) {
+//				throw new FileNotFoundException("What? not a directory but no parent.");
+//			}
+//		}
+//		while (true) {
+//			String[] files_list = current_file.list((_, name) -> name.equals("root.bl"));
+//			if (files_list.length == 1) {
+//				return current_file; // this is the directory of root.bl !!!
+//			}
+//			current_file = current_file.getParentFile();
+//			if (current_file == null) {
+//				throw new FileManagerException("Could not locate root directory.");
+//			}
+//		}
+//	}
+	
+	/**
+	 * From a file and it's rootpath, builds a new file manager.
+	 * @param current_file_rootpath the rootpath of the current file
+	 * @param current_file the file
+	 */
+	public FileManagerBAD(Rootpath current_file_rootpath, File current_file) {
+		// first, sanity checks
+		if (!current_file.getName().contains(current_file_rootpath.getLast())) {
+			throw new FileManagerException(String.format("The provided file %s was not at the end of the path %s.", current_file.getName(), current_file_rootpath));
+		}
+		for (int i=current_file_rootpath.size() - 2; i >= 0; i--) {
+			current_file = current_file.getParentFile();
+			if (current_file == null) throw new FileManagerException("Cannot ascend past file system root. No FileManager here.");
+			// TODO if we throw these exceptions, it means that the 'as' statement is incorrect!
+			// TODO figure out what to do with that info.
+			if (!current_file.getName().equals(current_file_rootpath.get(i))) {
+				throw new FileManagerException(String.format("Expected directory %s at index %d of rootpath, but got directory %s.", current_file_rootpath.get(i), i, current_file.getName()));
+			}
+		}
+		// ascend one more for root directory
+		current_file = current_file.getParentFile();
+		if (current_file == null) throw new FileManagerException("Cannot ascend past file system root. No FileManager here.");
+		
+		root_directory = current_file;
+		fileMap = new HashMap<>();
+		
+	}
+	
+	public boolean isRootOf(String absolute_file_path) {
+		String root_absolute_path = root_directory.getAbsolutePath();
+		return absolute_file_path.contains(root_absolute_path);
+	}
+
+	// TODO don't do this. this sucks.
+	public boolean isRootOf(File file) {
+		String root_absolute_path = root_directory.getAbsolutePath();
+		return file.getAbsolutePath().contains(root_absolute_path);
+	}
+
+	public File getFile(Rootpath rootpath) {
+		if (!fileMap.containsKey(rootpath))
+			throw new FileManagerException(
+					String.format("This file manager does not contain the provided rootpath '%s'.", rootpath));
+		FileInfo info = fileMap.get(rootpath);
+		return info.file;
+	}
+
+	/**
+	 * Tells the file manager that the globals have been recomputed for a given
+	 * file. Stores the globals, and also updates the last touched time. Both of
+	 * these together help with imports and keeping our references up-to-date.
+	 */
+	public void indicateGlobals(Rootpath rootpath, GlobalEnvironment globals) {
+		if (!fileMap.containsKey(rootpath))
+			throw new FileManagerException(
+					String.format("This file manager does not contain the provided rootpath '%s'.", rootpath));
+		FileInfo info = fileMap.get(rootpath);
+		info.globals = globals;
+	}
+
+	public GlobalEnvironment getGlobals(Rootpath rootpath) {
+		if (!fileMap.containsKey(rootpath)) {
+			throw new FileManagerException(
+					String.format("This file manager does not contain the provided rootpath '%s'.", rootpath));
+		}
+
+		FileInfo info = fileMap.get(rootpath);
+		return info.globals;
+	}
+
+	/**
+	 * Precondition: the file manager is the root of the given file
+	 * 
+	 * @param f
+	 * @return
+	 */
+	public Rootpath getRootpathOf(File f) {
+		if (!isRootOf(f))
+			throw new FileManagerException(String.format("This file manager is not the root of file '%s'.", f));
+
+		List<String> rootpath = new LinkedList<>();
+		String end_part = f.getName();
+		end_part = end_part.split("\\.")[0];
+
+		rootpath.addFirst(end_part);
+		f = f.getParentFile();
+
+		String root_absolute_path = root_directory.getAbsolutePath();
+		while (!root_absolute_path.equals(f.getAbsolutePath())) {
+
+			rootpath.addFirst(f.getName());
+			f = f.getParentFile();
+		}
+
+		return new Rootpath(rootpath);
+	}
+	
+	// TODO combine with other import?
+	
+	public boolean importFileWithGlobals(Rootpath rootpath, GlobalEnvironment globals) {
+		System.err.println(String.format("Trying to import %s", rootpath));
+		if (fileMap.containsKey(rootpath)) {
+			// it's already there...
+			throw new FileManagerException("It's already imported! Don't call this without checking.");
+		}
+		
+		File file_from_rootpath = rootpath.toFile(root_directory.getAbsolutePath());
+		if (file_from_rootpath == null)
+			return false; // could not acknowledge
+
+		// even though we don't do eval, we assume that it will happen so we set the last checked time
+		FileInfo info = new FileInfo(file_from_rootpath, rootpath, globals);
+		info.globals = globals;
+		fileMap.put(rootpath, info);
+		
+		return true;
+		
+	}
+	
+	public boolean isRootOf(Rootpath rootpath, File file) {
+		File current_file = root_directory;
+		
+		// first, go through directories
+		for (int i=0; i < rootpath.size() - 1; i++) {
+			String cur_str = rootpath.get(i);
+			File[] results = current_file.listFiles((f, name) -> f.isDirectory() && name.equals(cur_str));
+			if (results.length == 0) return false;
+			if (results.length > 1) throw new RuntimeException("Hey! This shouldn't be possible to have more than 1 result!");
+			current_file = results[0]; // get first directory
+		}
+		// then, find end file
+		File[] results = current_file.listFiles((f, name) -> f.isFile() && name.equals(rootpath.getLast()));
+		if (results.length == 0) return false;
+		if (results.length > 1) throw new RuntimeException("Hey! This shouldn't be possible to have more than 1 result!");
+		// sanity check
+		if (!file.equals(results[1])) throw new RuntimeException("Hey! We should have found the provided file!");
+		
+		return true;
+		
+		
+	}
+	public boolean has(Rootpath rootpath) {
+		System.err.println("HAS CALLED on " + rootpath);
+		System.err.println(String.format("  file map contains key: %s", fileMap.containsKey(rootpath)));
+		for (Rootpath key : fileMap.keySet()) {
+			System.err.println(String.format("   + Comparing to %s: %s", key, rootpath.equals(key)));
+		}
+		return fileMap.containsKey(rootpath);
+	}
+
+}

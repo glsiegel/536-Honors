@@ -1,0 +1,214 @@
+package interpreter;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import edu.data.*;
+import edu.data.Stmt.*;
+import edu.error.TypeFailure;
+import edu.data.Expr.*;
+
+
+public class GlobalBuilder implements Expr.Visitor<Object>, Stmt.Visitor<Void> {
+	public final interpreter.GlobalEnvironment globals = new GlobalEnvironment();
+	
+	public final List<TypeFailure> typeFailures = new ArrayList<>();
+
+	public GlobalBuilder() {
+		
+	}
+
+	
+	public void run(List<Stmt> statements) {
+		for (Stmt stmt : statements) { 
+			stmt.accept(this);
+		}
+	}
+
+
+	@Override
+	public Void visitBlockStmt(Block stmt) {
+		return null;
+	}
+
+	@Override
+	public Void visitExpressionStmt(Expression stmt) {
+		return null;
+	}
+
+	@Override
+	public Void visitFunctionStmt(Function stmt) {
+		// put into globals
+		if (!globals.putFunction(stmt)) {
+			typeFailures.add(TypeFailure.New(stmt, "Function exists with this name."));
+		}
+		return null;
+	}
+
+	@Override
+	public Void visitIfStmt(If stmt) {
+		return null;
+	}
+
+	@Override
+	public Void visitPrintStmt(Print stmt) {
+		return null;
+	}
+
+	@Override
+	public Void visitReturnStmt(Return stmt) {
+		return null;
+	}
+
+	@Override
+	public Void visitVarStmt(Var stmt) {
+		if (!globals.put(stmt.name, stmt.initializer.accept(this))) {
+			typeFailures.add(TypeFailure.New(stmt, "Global variable exists with this name."));
+		}
+		return null;
+	}
+
+	@Override
+	public Void visitAssignStmt(Assign stmt) {
+		return null;
+	}
+
+	@Override
+	public Void visitWhileStmt(While stmt) {
+		return null;
+	}
+
+	@Override
+	public Void visitImportStmt(Import stmt) {
+		globals.importRootpathAs(stmt.name, stmt.rootpath);
+		return null;
+	}
+
+	@Override
+	public Void visitAsStmt(As stmt) {
+		return null;
+	}
+
+	@Override
+	public Object visitBinaryExpr(Expr.Binary expr) {
+		// Evaluate left and right operands, then apply the operator
+		// Handle arithmetic (+, -, *, /), comparison (==, !=, <, <=, >, >=), and
+		// logical (&&, ||) operators
+
+		Object leftObj = expr.left.accept(this);
+		Object rightObj = expr.right.accept(this);
+
+		switch (expr.operator) {
+		// first look at the ones that require two integers
+		case PLUS, MINUS, MULTIPLY, DIVIDE, LESS, GREATER, LESS_EQUAL, GREATER_EQUAL -> {
+			if (!(leftObj instanceof Integer && rightObj instanceof Integer)) {
+				throw new RuntimeException("Operator " + expr.operator + " requires two numbers.");
+			}
+
+			Integer left = (Integer) leftObj;
+			Integer right = (Integer) rightObj;
+
+			// we have the integers, now just compute
+			if (expr.operator == Operator.PLUS)
+				return left + right;
+			else if (expr.operator == Operator.MINUS)
+				return left - right;
+			else if (expr.operator == Operator.MULTIPLY)
+				return left * right;
+			else if (expr.operator == Operator.DIVIDE)
+				return left / right;
+			else if (expr.operator == Operator.LESS)
+				return left < right;
+			else if (expr.operator == Operator.GREATER)
+				return left > right;
+			else if (expr.operator == Operator.LESS_EQUAL)
+				return left <= right;
+			else if (expr.operator == Operator.GREATER_EQUAL)
+				return left >= right;
+		}
+		// second look at the ones that take two bools
+		case OR, AND -> {
+			if (!(leftObj instanceof Boolean && rightObj instanceof Boolean)) {
+				throw new RuntimeException("Operator " + expr.operator + " requires two booleans.");
+			}
+
+			Boolean left = (Boolean) leftObj;
+			Boolean right = (Boolean) rightObj;
+
+			// we have the bools, just compute
+			if (expr.operator == Operator.OR) {
+				return left || right;
+			} else if (expr.operator == Operator.AND) {
+				return left && right;
+			}
+		}
+		// lastly, look at the ones that take any two types: equality and inequality
+		case EQUAL -> {
+			return leftObj.equals(rightObj);
+		}
+		case NOT_EQUAL -> {
+			return !leftObj.equals(rightObj);
+		}
+		default -> throw new RuntimeException("Operator " + expr.operator + " not implemented for binary.");
+
+		}
+
+		return null; // never gets here
+	}
+
+
+	@Override
+	public Object visitLiteralExpr(Literal expr) {
+		// TODO Auto-generated method stub
+		return expr.value;
+	}
+	
+	@Override
+	public Object visitUnaryExpr(Expr.Unary expr) {
+		// Evaluate the right operand and apply the unary operator (!, -)
+		Object val = expr.right.accept(this);
+
+		// go through the operators
+		// only two are valid for unary, so the rest should error
+		switch (expr.operator) {
+		case MINUS:
+			// minus requires an integer. otherwise throw error
+			if (!(val instanceof Integer)) {
+				throw new RuntimeException("Can only use " + expr.operator + " on numbers");
+			}
+			Integer intVal = (Integer) val;
+			return -intVal;
+		case NOT:
+			// not requires a bool. otherwise throw error
+			if (!(val instanceof Boolean)) {
+				throw new RuntimeException("Can only use " + expr.operator + " on booleans");
+			}
+			Boolean boolVal = (Boolean) val;
+			return !boolVal;
+		default:
+			throw new RuntimeException("Unary not implemented for " + expr.operator);
+		}
+	}
+
+	@Override
+	public Object visitVariableExpr(Expr.Variable expr) {
+		typeFailures.add(TypeFailure.New(expr,"Globals cannot be initialized with a variable call. Use simple expressions with literals."));
+		return 0;
+	}
+
+
+
+	@Override
+	public Object visitCallExpr(Call expr) {
+		typeFailures.add(TypeFailure.New(expr,"Globals cannot be initialized with a function call. Use simple expressions with literals."));
+		return 0;
+	}
+
+	@Override
+	public Object visitIndirectExpr(Indirect expr) {
+		typeFailures.add(TypeFailure.New(expr,"Globals cannot be initialized with an indirection to other globals. Use simple expressions with literals."));
+		return 0;
+	}
+	
+	
+}

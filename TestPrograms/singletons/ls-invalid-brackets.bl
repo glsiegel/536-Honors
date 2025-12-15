@@ -1,0 +1,10 @@
+int x = 0;
+y + 5; // ideally, also error here!
+while (x < 20) { // error here
+    if (x == 10) {
+        print 1;
+    } else {
+        print 5;
+        
+}
+print 2;

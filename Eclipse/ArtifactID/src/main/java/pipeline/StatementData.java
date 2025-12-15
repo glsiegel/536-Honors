@@ -1,0 +1,26 @@
+package pipeline;
+
+import java.util.List;
+
+import data.Stmt;
+
+/**
+ * Packages a list of statements together with the errors procured in generating
+ * this list.
+ */
+public class StatementData {
+
+	public final List<Stmt> statements;
+	public final List<error.IError> errors;
+	public final Rootpath rootpath;
+
+	public StatementData(List<Stmt> statements, List<error.IError> errors, Rootpath rootpath) {
+		this.statements = statements;
+		this.errors = errors;
+		this.rootpath = rootpath;
+	}
+
+	public StatementData(List<Stmt> statements, List<error.IError> errors) {
+		this(statements, errors, null);
+	}
+}

@@ -1,0 +1,20 @@
+as complex.another.collection;
+import simple.calls as calls;
+
+int yay = 50;
+
+fun int gcd(int a, int b) {
+    if (a < b) {
+        return gcd(b,a);
+    }
+
+    int mod = a - (a / b) * b;
+
+    if (mod == 0) {
+        print calls.hey();
+        return b;
+    }
+    return gcd(b, mod);
+}
+
+// run project-ex-1/simple/calls.bl to see it reference this.

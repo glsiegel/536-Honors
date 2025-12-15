@@ -1,0 +1,21 @@
+package error;
+
+import data.CodeSection;
+
+/**
+ * Generic error type. Contains a CodeSection and a message.
+ */
+public abstract class IError {
+	public final CodeSection section;
+	public final String message;
+	
+	public IError(CodeSection section, String message) {
+		this.section = section;
+		this.message = message;
+	}
+	
+	@Override
+	public String toString() {
+		return String.format("%s: %s", section, message);
+	}
+}

@@ -1,0 +1,28 @@
+package edu.data;
+
+/**
+ * Look, I know this is terrible.
+ * I'm trying to learn Rust so my mind is there right now.
+ * 
+ */
+public static class Outcome<A,B> {
+	public final boolean hasFirstType;
+	private final Object result;
+	
+	public Outcome(A first) {
+		this.result = first;
+		hasFirstType = true;
+	}
+	public Outcome(B second) {
+		this.result = second;
+		hasFirstType = false;
+	}
+	
+	public A getFirst() {
+		return (FileManager<VarType> )result;
+	}
+	
+	public StatementData getStatementData() {
+		return (StatementData) result;
+	}
+}

@@ -1,0 +1,58 @@
+package checker.data;
+
+import edu.data.VarType;
+
+public interface IEnvironment<T> {
+	/**
+     * Determines whether there is an entry in this environment or any of its
+     * parents for the given name.
+     * @param name name to check
+     * @return true if the key exists somewhere here or upward in the hierarchy,
+     * false otherwise.
+     */
+    public boolean has(String name);
+    
+    /**
+     * Puts a value to a variable that is NEW to the environment.
+     * This is like saying "int x = 5": it puts the value 5 at "x".
+     * Note that this method will get angry if you try to put a name that already
+     * exists at this scope. You can overload something from a parent scope, but
+     * you CANNOT redefine a variable within the same scope.
+     * @param name
+     * @param val
+     */
+    public boolean put(String name, VarType val, boolean parameter);
+    
+    /**
+     * Assigns a value to a variable that is already in the environment.
+     * @param name
+     * @param val
+     */
+    public boolean assign(String name, VarType val);
+    
+    /**
+     * Generally gets the object associated with the identifier. Scope-aware.
+     * Gets the most nested value for the identifier.
+     * @param name name of the identifier
+     * @return the associated object
+     */
+    public VarType get(String name);
+    
+    /**
+     * Determines whether the scope is a function or is a child scope of a
+     * function.
+     * @return
+     */
+    public boolean isFunction();
+    
+    /**
+     * Gets the depth of the scope. Globals are at 0, the next level is 1, then 2,
+     * and so on. Higher depth means more nested scope.
+     * @return
+     */
+    public int getDepth();
+    
+    public VarType getReturnType();
+    
+    public int getKindIdx(String name);
+}

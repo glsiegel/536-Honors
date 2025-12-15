@@ -1,0 +1,639 @@
+package checker;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+
+import data.*;
+import data.Expr.Indirect;
+import data.Stmt.As;
+import data.Stmt.Import;
+import env.GlobalEnvironment;
+import env.IEnvironment;
+import env.LocalEnvironment;
+import error.VisitorError;
+import pipeline.FileInfo;
+import pipeline.FileManager;
+import pipeline.Rootpath;
+
+/**
+ * The type and name checker (with some other additional small checks). Runs on
+ * a list of statements. Works for both singleton and non-singleton files. If
+ * the file is non-singleton, then the rootpath and file manager of the checked
+ * file must be passed.
+ */
+public class Checker implements Expr.Visitor<VarType>, Stmt.Visitor<Boolean> {
+
+	/**
+	 * Boolean which determines whether we have a singleton or not. If true, means
+	 * it's not a singleton and we must consider other files. If false, then
+	 * my_rootpath and fileManager are both null (and should not be used).
+	 */
+	private final boolean hasAs;
+	private final Rootpath my_rootpath;
+	private final FileManager<VarType> fileManager;
+	/**
+	 * Maps from local import name to the rootpath. So, if we have: import
+	 * package.environment.Environment as env Then, this maps from env ->
+	 * package.environment.Environment
+	 */
+	private final HashMap<String, Rootpath> importMap = new HashMap<>();
+	/**
+	 * Global environment. The current environment starts as this one. Contains
+	 * functions also.
+	 */
+	protected final GlobalEnvironment<VarType> globals; // TODO currently this is kinda computed twice.
+	/**
+	 * Current environment. Changes depending on the scope or whether we are in a
+	 * function call.
+	 */
+	protected IEnvironment<VarType> current;
+
+	/**
+	 * A list of all the issues we encountered. These can be looked at afterwards
+	 * (hence public) to provide the user with all errors.
+	 */
+	public final List<VisitorError> visitorErrors = new ArrayList<>();
+
+	/**
+	 * A list of the semantic tokens. This helps us color identifiers properly.
+	 */
+	public final List<IdentifierInfo> semanticTokens = new ArrayList<>();
+
+	/**
+	 * Creates the checker
+	 */
+	public Checker() {
+		this.globals = new GlobalEnvironment<VarType>();
+		this.current = this.globals;
+		hasAs = false;
+		my_rootpath = null;
+		fileManager = null;
+	}
+
+	public Checker(Rootpath rootpath, FileManager<VarType> manager) {
+		this.globals = new GlobalEnvironment<VarType>();
+		this.current = this.globals;
+		hasAs = true;
+		my_rootpath = rootpath;
+		fileManager = manager;
+	}
+
+	public void runChecker(List<Stmt> statements) {
+		for (Stmt stmt : statements) {
+			stmt.accept(this);
+		}
+	}
+
+	@Override
+	public VarType visitBinaryExpr(Expr.Binary expr) {
+		VarType left = expr.left.accept(this);
+		VarType right = expr.right.accept(this);
+
+		// look at all possible operators
+		// determine if left and right match the expected.
+		switch (expr.operator) {
+		// LOGICAL: requires BOOL, BOOL and returns BOOL
+		case AND:
+		case OR:
+
+			if (left != VarType.BOOL || right != VarType.BOOL) {
+				visitorErrors.add(VisitorError.New(expr,
+						String.format("Type error: Both sides of %s must be boolean. Left: %s. Right: %s.",
+								expr.operator, left, right)));
+			}
+			return VarType.BOOL;
+
+		// MATHEMATICAL: requires INT, INT and returns INT
+		case DIVIDE:
+		case MULTIPLY:
+		case PLUS:
+		case MINUS:
+			if (left != VarType.INT || right != VarType.INT) {
+				visitorErrors.add(VisitorError.New(expr,
+						String.format("Type error: Both sides of %s must be integers. Left: %s. Right: %s.",
+								expr.operator, left, right)));
+			}
+			return VarType.INT;
+
+		// COMPARATIVE: requires INT, INT and returns BOOL
+		case LESS:
+		case LESS_EQUAL:
+		case GREATER:
+		case GREATER_EQUAL:
+			if (left != VarType.INT || right != VarType.INT) {
+				visitorErrors.add(VisitorError.New(expr,
+						String.format("Type error: Both sides of %s must be integers. Left: %s. Right: %s.",
+								expr.operator, left, right)));
+			}
+			return VarType.BOOL;
+
+		// EQUALITY: requires two objects of the same type (not NONE), and returns BOOL.
+		case EQUAL:
+		case NOT_EQUAL:
+			if (left != right) {
+				visitorErrors.add(VisitorError.New(expr, String.format(
+						"Type error: Both sides of %s must be the same type for equality/inequality. Left: %s. Right: %s,",
+						expr.operator, left, right)));
+			}
+			if (left == VarType.NONE) {
+				visitorErrors.add(VisitorError.New(expr, String.format(
+						"Type error: Invalid type for equality. Must be int or bool. How did you even manage to invoke this?",
+						expr.operator)));
+			}
+			return VarType.BOOL;
+		default:
+			visitorErrors.add(VisitorError.New(expr,
+					"Hey! This expression does not have a valid operator for binary! " + expr.operator));
+			return VarType.INT;
+		}
+
+	}
+
+	@Override
+	public VarType visitLiteralExpr(Expr.Literal expr) {
+		if (expr.value instanceof Integer)
+			return VarType.INT;
+		if (expr.value instanceof Boolean)
+			return VarType.BOOL;
+
+		visitorErrors.add(VisitorError.New(expr,
+				"This literal is neither an integer nor a bool. The provided type is not supported."));
+		return VarType.INT;
+	}
+
+	@Override
+	public VarType visitUnaryExpr(Expr.Unary expr) {
+		VarType right = expr.right.accept(this);
+		// look at the possible values for the operator
+		switch (expr.operator) {
+		// with unary, minus must come before an INT and returns an INT.
+		case MINUS:
+			if (right != VarType.INT) {
+				visitorErrors.add(VisitorError.New(expr,
+						String.format("Type error: With minus, you must negate type INT, not type %s.", right)));
+			}
+			return VarType.INT;
+
+		// with unary, not must come before a BOOL and returns a BOOL.
+		case NOT:
+			if (right != VarType.BOOL) {
+				visitorErrors.add(VisitorError.New(expr,
+						String.format("Type error: With not, you must negate type BOOL, not type %s.", right)));
+			}
+			return VarType.BOOL;
+		default:
+			visitorErrors.add(VisitorError.New(expr, "Hey! This expression does not have a valid operator for unary!"));
+			return VarType.INT;
+		}
+	}
+
+	@Override
+	public VarType visitVariableExpr(Expr.Variable expr) {
+		// from the current environment, check if we have the variable.
+		if (!current.has(expr.name)) {
+			visitorErrors.add(VisitorError.New(expr, String.format(
+					"Name error: Tried to access variable %s, which does not exist at this scope or any parent scopes. Will assume it's an integer.",
+					expr.name)));
+
+			// if we don't have the variable, then we just assume its an INT so
+			// that the program can keep working.
+			return VarType.INT;
+
+		}
+
+		// semantic analysis
+		{
+			int kind = current.getKindIdx(expr.name);
+			IdentifierInfo info = new IdentifierInfo(expr.name, kind, expr.section.startLine, expr.section.startOffset,
+					expr.name.length());
+			semanticTokens.add(info);
+		}
+
+		VarType value = current.get(expr.name);
+		return value;
+	}
+
+	protected VarType _callHelper(Expr.Call expr, Stmt.Function fcn) {
+		if (fcn == null) {
+			visitorErrors.add(VisitorError.New(expr,
+					String.format(
+							"Name error: Could not find function with name %s. Will assume it returns an integer.",
+							expr.name)));
+			return VarType.INT; // presume that the call expects to be an int
+			// don't check the rest of the call if we don't know the name,
+			// cuz we have nothing to check against!
+		}
+
+		// semantic analysis
+		{
+			int kind = 4; // function
+			IdentifierInfo info = new IdentifierInfo(expr.name, kind, expr.call_name_section.startLine,
+					expr.call_name_section.startOffset, expr.name.length());
+			semanticTokens.add(info);
+		}
+
+		// find out each argument in the call expression
+		List<VarType> varTypes = new ArrayList<>();
+		for (Expr argument : expr.arguments) {
+			varTypes.add(argument.accept(this));
+		}
+
+		// it's ok if there are no params, but then we need there to be no
+		// arguments passed.
+		if (fcn.params == null) {
+			if (!varTypes.isEmpty()) {
+				visitorErrors.add(VisitorError.New(expr, String.format(
+						"Type error: Number of arguments did not match number of params. Wanted %d parameters, got %d arguments.",
+						0, varTypes.size())));
+			}
+			return fcn.returnType;
+		}
+
+		// check that the sizes are the same, otherwise we have a problem.
+		if (varTypes.size() != fcn.params.size()) {
+			visitorErrors.add(VisitorError.New(expr, String.format(
+					"Type error: Number of arguments did not match number of params. Wanted %d parameters, got %d arguments.",
+					fcn.params.size(), varTypes.size())));
+		}
+
+		// regardless if the sizes are the same, check the first n elements,
+		// where n is the smallest of the two sizes.
+		int smallest = Math.min(varTypes.size(), fcn.params.size());
+
+		for (int i = 0; i < smallest; i++) {
+			// compare each elt
+			if (fcn.params.get(i).type() != varTypes.get(i)) {
+				visitorErrors.add(VisitorError.New(expr.arguments.get(i), String.format(
+						"Type error: Argument at index %d evaluated to %s when we expected %s from the function definition.",
+						i, varTypes.get(i), fcn.params.get(i).type())));
+
+			}
+		}
+
+		return fcn.returnType;
+	}
+
+	@Override
+	public VarType visitCallExpr(Expr.Call expr) {
+		// get the function from the global function storage location
+		Stmt.Function fcn = globals.getFunction(expr.name);
+		return _callHelper(expr, fcn);
+	}
+
+	@Override
+	public Boolean visitBlockStmt(Stmt.Block stmt) {
+		boolean hasReturn = false;
+		// make a new environment
+		LocalEnvironment<VarType> child = new LocalEnvironment<>(current);
+		IEnvironment<VarType> parent = current; // store old env
+		current = child; // sub the new env
+		// go through and descend on all of them!
+		boolean hasUnreachableCode = false;
+		for (Stmt statement : stmt.statements) {
+			if (hasReturn && !hasUnreachableCode) {
+				hasUnreachableCode = true;
+				visitorErrors.add(VisitorError.New(statement, "Unreachable code."));
+			}
+			hasReturn |= statement.accept(this);
+		}
+		current = parent; // recall old env
+		return hasReturn;
+	}
+
+	@Override
+	public Boolean visitExpressionStmt(Stmt.Expression stmt) {
+		// check the type of the underlying expression
+		stmt.expression.accept(this);
+		return false;
+	}
+
+	@Override
+	public Boolean visitFunctionStmt(Stmt.Function stmt) {
+		boolean hasReturn = false;
+		// try to put the function into our global function store.
+		// if we can do it, great. keep going.
+		// if we can't, then we have an issue (two functions of same name)
+		if (!globals.putFunction(stmt)) {
+			visitorErrors.add(VisitorError.New(stmt,
+					String.format("Name error: There is already a function with the given name %s.", stmt.name)));
+		}
+		// semantic analysis
+		{
+			int kind = 4; // function
+			IdentifierInfo info = new IdentifierInfo(stmt.name, kind, stmt.function_name_section.startLine,
+					stmt.function_name_section.startOffset, stmt.name.length());
+			semanticTokens.add(info);
+		}
+
+		// make new fcn env
+		LocalEnvironment<VarType> fcnEnv = new LocalEnvironment<>(globals, stmt.returnType);
+		IEnvironment<VarType> previousEnv = current; // store old env
+
+		for (Stmt.Parameter param : stmt.params) {
+			VarType param_type = param.type();
+			String param_name = param.name();
+
+			// Why is this in try/catch?
+			// Well, we need to make sure that this identifier does not already
+			// exist at this highest scope.
+			// .put throws an exception specifically if the user tries
+			// to put a duplicate identifier.
+			// The "has" method does descending checks into the parent
+			// environments to look for the identifier.
+			// We don't want to check those, because we can actually re-identify
+			// a variable at a deeper scope.
+			// As such, using the try/catch allows us to check if we have
+			// duplicate parameters.
+
+			boolean put_result = fcnEnv.put(param_name, param_type, true);
+			if (put_result) {
+				// semantic analysis on it
+				int kind = 1; // parameter
+				CodeSection param_section = param.name_section();
+				IdentifierInfo info = new IdentifierInfo(param_name, kind, param_section.startLine,
+						param_section.startOffset, param_name.length());
+				semanticTokens.add(info);
+
+			} else {
+				visitorErrors.add(VisitorError.New(stmt,
+						String.format("Name error: Parameter with name %s is duplicated.", param_name)));
+			}
+		}
+
+		current = fcnEnv;
+
+		boolean hasUnreachableCode = false;
+
+		for (Stmt statement : stmt.body) {
+			// observe each statement in the fcn
+			// notice that we're doing this even though the fcn hasn't even been
+			// "called"! That's just how this visitor works, we check every path
+			// immediately.
+			if (hasReturn && !hasUnreachableCode) {
+				hasUnreachableCode = true;
+				visitorErrors.add(VisitorError.New(statement, "Unreachable code."));
+			}
+			hasReturn |= statement.accept(this);
+		}
+
+		current = previousEnv; // restore environment
+
+		if (!hasReturn) {
+			visitorErrors.add(VisitorError.New(stmt, "Not all code paths return a value."));
+		}
+
+		return hasReturn;
+	}
+
+	@Override
+	public Boolean visitIfStmt(Stmt.If stmt) {
+		// check if the conditional evaluates to a boolean.
+		VarType conditional = stmt.condition.accept(this);
+		if (conditional != VarType.BOOL) {
+			visitorErrors.add(VisitorError.New(stmt.condition,
+					String.format("Type error: Conditional evaluates to %s, when it should be BOOL.", conditional)));
+		}
+
+		// investigate both the then and else branches.
+		boolean returns_in_then = stmt.thenBranch.accept(this);
+		boolean returns_in_else = false;
+		if (stmt.elseBranch != null) {
+			returns_in_else = stmt.elseBranch.accept(this);
+		}
+
+		return returns_in_then && returns_in_else;
+	}
+
+	@Override
+	public Boolean visitPrintStmt(Stmt.Print stmt) {
+		if (stmt.expression.accept(this) == VarType.NONE) {
+			visitorErrors.add(VisitorError.New(stmt,
+					"Type error: Print statement can only print things that evaluate to INT or BOOL."));
+		}
+		return false;
+	}
+
+	@Override
+	public Boolean visitReturnStmt(Stmt.Return stmt) {
+		VarType expr_type = stmt.value.accept(this);
+
+		// if we're not even in a function, then we will just give a type
+		// failure, even though this could easily be an exception.
+		if (!current.isFunction()) {
+			visitorErrors.add(
+					VisitorError.New(stmt, "Type error: There is a return statement that is not inside a function."));
+			return true;
+		}
+
+		if (expr_type != current.getReturnType()) {
+			visitorErrors.add(VisitorError.New(stmt.value,
+					String.format(
+							"Type error: Return type is not the same as function's return type. Wanted %s, found %s.",
+							current.getReturnType(), expr_type)));
+		}
+
+		return true;
+	}
+
+	@Override
+	public Boolean visitVarStmt(Stmt.Var stmt) {
+
+		// check that the initialized value matches
+		if (stmt.initializer != null) {
+			VarType expr_type = stmt.initializer.accept(this);
+			if (stmt.type != expr_type) {
+				visitorErrors.add(VisitorError.New(stmt,
+						String.format("Type error: Type %s of variable %s does not match the expression evaluation %s.",
+								stmt.type, stmt.name, expr_type)));
+			}
+		}
+
+		// detect if we are trying to declare a variable that is
+		// already declared at this scope.
+		boolean put_result = current.put(stmt.name, stmt.type, false);
+		if (!put_result) {
+			visitorErrors.add(VisitorError.New(stmt, String.format(
+					"Name error: Variable %s already exists at this scope. To fix this, either do not specify the type, or change the variable name.",
+					stmt.name)));
+		}
+
+		// semantic analysis
+		{
+			int kind = current.getKindIdx(stmt.name);
+			IdentifierInfo info = new IdentifierInfo(stmt.name, kind, stmt.var_name_section.startLine,
+					stmt.var_name_section.startOffset, stmt.name.length());
+			semanticTokens.add(info);
+		}
+
+		// the .put has to come at the end so a variable's initializer cannot reference
+		// itself.
+
+		return false;
+	}
+
+	@Override
+	public Boolean visitAssignStmt(Stmt.Assign stmt) {
+		// if variable doesnt exist, there is a problem
+		if (!current.has(stmt.name)) {
+			visitorErrors.add(VisitorError.New(stmt,
+					String.format("Name error: Trying to assign a value to undeclared variable %s.", stmt.name)));
+			return false;
+		}
+
+		// semantic analysis
+		{
+			int kind = current.getKindIdx(stmt.name);
+			IdentifierInfo info = new IdentifierInfo(stmt.name, kind, stmt.var_name_section.startLine,
+					stmt.var_name_section.startOffset, stmt.name.length());
+			semanticTokens.add(info);
+		}
+
+		// compare expected type (from the environment) and the provided type
+		// (from the assignment expression on the RHS)
+		VarType expr_type = stmt.value.accept(this);
+		VarType expected_type = current.get(stmt.name);
+		if (expr_type != expected_type) {
+			visitorErrors.add(VisitorError.New(stmt, String.format(
+					"Type error: Expected type %s for variable assignment %s, but expression evaluated to type %s.",
+					expected_type, stmt.name, expr_type)));
+		}
+		return false;
+	}
+
+	@Override
+	public Boolean visitWhileStmt(Stmt.While stmt) {
+		// verify condition is bool
+		VarType cond_type = stmt.condition.accept(this);
+		if (cond_type != VarType.BOOL) {
+			visitorErrors.add(VisitorError.New(stmt.condition, String
+					.format("Type error: While statement conditional should evaluate to BOOL, not %s.", cond_type)));
+
+		}
+		// do the body
+		stmt.body.accept(this);
+
+		return false;
+	}
+
+	public GlobalEnvironment<VarType> getGlobals() {
+		return globals;
+	}
+
+	@Override
+	public Boolean visitImportStmt(Import stmt) {
+		// TODO Auto-generated method stub
+		if (!hasAs) {
+			visitorErrors.add(VisitorError.New(stmt, "Cannot use import statements without an 'as' statement."));
+			return false;
+		}
+
+		if (importMap.containsKey(stmt.name)) {
+			visitorErrors.add(VisitorError.New(stmt, "Already exists import of name " + stmt.name));
+			return false;
+		}
+
+		// add to import map NOW so that we can have circular dependencies.
+		// if we didnt add to import map, things could get weird with return statements.
+		importMap.put(stmt.name, stmt.rootpath);
+
+		// check if we need to bring the file into the manager
+		if (!fileManager.has(stmt.rootpath)) {
+			// TODO we should panic actually.
+			// this should be sorted through
+
+			// need to bring it in
+			// it must also not be opened
+			boolean import_failed = fileManager.pullInFile(stmt.rootpath, false) == null;
+			if (import_failed) {
+				// remove from the map and show failure
+				visitorErrors.add(VisitorError.New(stmt, "Could not import file " + stmt.rootpath));
+				importMap.remove(stmt.name);
+
+				// don't return, still do semantic analysis.
+			}
+		}
+
+		// semantic analysis
+		{
+			int kind = 0; // global
+			IdentifierInfo info = new IdentifierInfo(stmt.name, kind, stmt.name_section.startLine,
+					stmt.name_section.startOffset, stmt.name.length());
+			semanticTokens.add(info);
+
+			String rootpath_str = stmt.rootpath.toString();
+			info = new IdentifierInfo(rootpath_str.toString(), kind, stmt.rootpath_section.startLine,
+					stmt.rootpath_section.startOffset, rootpath_str.length());
+			semanticTokens.add(info);
+		}
+
+		return false;
+	}
+
+	@Override
+	public VarType visitIndirectExpr(Indirect expr) {
+
+		if (!hasAs) {
+			visitorErrors.add(VisitorError.New(expr, "Cannot use imports without an 'as' statement."));
+			return VarType.INT; // just assume int
+		}
+		if (!importMap.containsKey(expr.source)) {
+			// something has gone wrong!
+			visitorErrors.add(VisitorError.New(expr, "Could not resolve source."));
+			return VarType.INT;
+		}
+
+		// semantic analysis for source
+		{
+			int kind = 0; // global
+			IdentifierInfo info = new IdentifierInfo(expr.source, kind, expr.source_section.startLine,
+					expr.source_section.startOffset, expr.source.length());
+			semanticTokens.add(info);
+		}
+		Rootpath other_rootpath = importMap.get(expr.source);
+
+		FileInfo<VarType> fileinfo = fileManager.getFileInfo(other_rootpath);
+
+		GlobalEnvironment<VarType> other_globals = fileinfo.getGlobals();
+		if (other_globals == null) {
+			visitorErrors.add(VisitorError.New(expr,
+					"Could not use indirection. The imported file " + other_rootpath + " cannot be verified."));
+		} else if (expr.indirect instanceof Expr.Variable varExpr) {
+			if (other_globals.has(varExpr.name)) {
+				// great! we have it
+				// this is all GOOD!
+
+				// semantic analysis
+				{
+					int kind = 0; // global
+					IdentifierInfo info = new IdentifierInfo(varExpr.name, kind, expr.section.startLine,
+							expr.section.startOffset, varExpr.name.length());
+					semanticTokens.add(info);
+				}
+				return other_globals.get(varExpr.name);
+			}
+			// TODO could be good to execute the AST of that file to find it? idk.
+			visitorErrors
+					.add(VisitorError.New(expr, "Could not find the associated variable in '" + expr.source + "'"));
+			return VarType.INT; // assume int
+		} else if (expr.indirect instanceof Expr.Call callExpr) {
+			Stmt.Function other_fcn = other_globals.getFunction(callExpr.name);
+			if (other_fcn == null) {
+				visitorErrors
+						.add(VisitorError.New(expr, "Could not find the associated function in '" + expr.source + "'"));
+				return VarType.INT;
+			}
+			return _callHelper(callExpr, other_fcn);
+		}
+
+		// TODO Auto-generated method stub
+		return VarType.NONE;
+	}
+
+	@Override
+	public Boolean visitAsStmt(As stmt) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+}

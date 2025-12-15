@@ -1,0 +1,159 @@
+package env;
+
+import java.util.HashMap;
+
+import data.Stmt;
+import data.VarType;
+import pipeline.Rootpath;
+
+/**
+ * Global environment which contains information about functions and global
+ * variables.
+ * 
+ * @param <T> the type to associate with variable names
+ */
+public class GlobalEnvironment<T> implements IEnvironment<T> {
+	/**
+	 * Global map from function names to the function statement.
+	 */
+	private final HashMap<String, Stmt.Function> functionMap;
+
+	/**
+	 * Global map from variable names to the type T.
+	 */
+	private final HashMap<String, T> variableMap;
+
+	/**
+	 * Global map from names to rootpaths.
+	 */
+	private final HashMap<String, Rootpath> importMap;
+
+	public GlobalEnvironment() {
+		this.functionMap = new HashMap<>();
+		this.variableMap = new HashMap<>();
+		this.importMap = new HashMap<>();
+	}
+
+	/**
+	 * Tries to get the function from its identifier.
+	 * 
+	 * @param name identifier of function
+	 * @return the function
+	 */
+	public Stmt.Function getFunction(String name) {
+
+		if (!functionMap.containsKey(name))
+			return null;
+		return functionMap.get(name);
+	}
+
+	/**
+	 * Tries to store a function.
+	 * 
+	 * @param fcn the function to store
+	 * @return true if it was sucessful. false if there was a collision (meaning
+	 *         there is already a function with this name)
+	 */
+	public boolean putFunction(Stmt.Function fcn) {
+
+		if (functionMap.containsKey(fcn.name)) {
+			return false;
+		}
+		functionMap.put(fcn.name, fcn);
+		return true;
+	}
+
+	/**
+	 * Imports a rootpath as the given name. Used when we encounter an import
+	 * statement.
+	 * 
+	 * @param name     how the imported file will be referred to in this file
+	 * @param rootpath rootpath to import
+	 * @return true if successful, false if there was a conflict, meaning the same
+	 *         name was used twice
+	 */
+	public boolean importRootpathAs(String name, Rootpath rootpath) {
+		if (this.importMap.containsKey(name))
+			return false;
+		this.importMap.put(name, rootpath);
+		return true;
+	}
+
+	/**
+	 * Gets the rootpath associated with the given name.
+	 * 
+	 * @param name the reference of the imported file
+	 * @return the associated rootpath, or null if it does not exist.
+	 */
+	public Rootpath getRootpathFrom(String name) {
+		if (!this.importMap.containsKey(name))
+			return null;
+		return this.importMap.get(name);
+	}
+
+	@Override
+	public boolean has(String name) {
+		// TODO Auto-generated method stub
+		return variableMap.containsKey(name);
+	}
+
+	@Override
+	public boolean put(String name, T val, boolean parameter) {
+		if (variableMap.containsKey(name)) {
+			return false;
+			// cannot use this method if the current scope already has an identifier
+			// for that name.
+		}
+		variableMap.put(name, val);
+		return true;
+
+	}
+
+	@Override
+	public boolean assign(String name, T val) {
+		// we need to find the highest scope identifier that is in the environment.
+		// like how we can override a variable in a more nested scope.
+
+		// check if the identifier exists at this global level
+		if (variableMap.containsKey(name)) {
+			Object prevVal = variableMap.get(name);
+
+			// verify that the new value does not change the type of the identifier
+			if (!prevVal.getClass().equals(val.getClass())) {
+				return false;
+			}
+			variableMap.put(name, val); // replace the value
+			return true;
+
+		} else {
+			return false;
+		}
+
+	}
+
+	@Override
+	public T get(String name) {
+		return variableMap.get(name);
+	}
+
+	@Override
+	public boolean isFunction() {
+		return false; // never is
+	}
+
+	@Override
+	public int getDepth() {
+		return 0; // globals are at depth 0
+	}
+
+	@Override
+	public VarType getReturnType() {
+		return VarType.NONE; // never a return type
+	}
+
+	@Override
+	public int getKindIdx(String name) {
+		return 0; // global kind
+	}
+
+}

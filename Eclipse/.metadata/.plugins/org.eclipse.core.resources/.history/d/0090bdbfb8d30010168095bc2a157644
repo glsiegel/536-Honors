@@ -1,0 +1,85 @@
+package env;
+
+import data.VarType;
+
+/**
+ * Environment interface. Could be global or local, must implement these
+ * methods.
+ * 
+ * @param <T> the type to associate with variable names
+ */
+public interface IEnvironment<T> {
+	/**
+	 * Determines whether there is an entry in this environment or any of its
+	 * parents for the given name.
+	 * 
+	 * @param name name to check
+	 * @return true if the key exists somewhere here or upward in the hierarchy,
+	 *         false otherwise.
+	 */
+	public boolean has(String name);
+
+	/**
+	 * Puts a value to a variable that is NEW to the environment. This is like
+	 * saying "int x = 5": it puts the value 5 at "x". You can overload something
+	 * from a parent scope, but you CANNOT redefine a variable within the same
+	 * scope.
+	 * 
+	 * @param name      name of variable
+	 * @param val       value to associate with variable
+	 * @param parameter set if this is a parameter to a function, ignore otherwise
+	 * @return true if it was successful, false if already exists
+	 */
+	public boolean put(String name, T val, boolean parameter);
+
+	/**
+	 * Assigns a value to a variable that is already in the environment.
+	 * 
+	 * @param name name of variable
+	 * @param val  new value to associate with variable
+	 * @return true if it was successful, false if the variable does not exist yet
+	 */
+	public boolean assign(String name, T val);
+
+	/**
+	 * Gets the object associated with the identifier. Scope-aware. Gets the most
+	 * nested value for the identifier.
+	 * 
+	 * @param name name of the identifier
+	 * @return the associated object
+	 */
+	public T get(String name);
+
+	/**
+	 * Determines whether the scope is a function or is a child scope of a function.
+	 * 
+	 * @return true iff this environment is a function
+	 */
+	public boolean isFunction();
+
+	/**
+	 * Gets the depth of the scope. Globals are at 0, the next level is 1, then 2,
+	 * and so on. Higher depth means more nested scope. Function scopes are thus at
+	 * 1.
+	 * 
+	 * @return depth of the environment
+	 */
+	public int getDepth();
+
+	/**
+	 * Gets the return type. Meaningless if not a function, since we're not in Rust.
+	 * 
+	 * @return return type of environment
+	 */
+	public VarType getReturnType();
+
+	/**
+	 * Gets the kindIdx of an identifier. Used for semantic analysis. This does mean
+	 * that environments will need to deduce some method for storing which kind each
+	 * identifier is.
+	 * 
+	 * @param name
+	 * @return
+	 */
+	public int getKindIdx(String name);
+}

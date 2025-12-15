@@ -1,0 +1,229 @@
+package env;
+
+import java.util.HashMap;
+
+import data.VarType;
+
+/**
+ * Local environment which contains variables in a local scope. Also dictates
+ * functions.
+ * 
+ * @param <T> the type to associate with variable names
+ */
+public class LocalEnvironment<T> implements IEnvironment<T> {
+	
+	/**
+	 * Parent environment. The scope which spawned this one. Since this is a local environment, this will always exist.
+	 */
+	private final IEnvironment<T> parent;
+	/**
+	 * Mappings from the identifier to the type.
+	 */
+	private final HashMap<String, T> store = new HashMap<>();
+	/**
+	 * HashMap that simply stores whether a variable is a function parameter or not. Used for semantic analysis.
+	 */
+	private final HashMap<String, Boolean> parameter_indicator = new HashMap<>();
+	/**
+	 * Depth of this scope. 0 = globals, counts upwards.
+	 */
+	private final int depth;
+	/**
+	 * Flag used to determine whether this environment is a function.
+	 */
+	private final boolean function;
+	/**
+	 * Only used if this is a function. Stores the return type.
+	 */
+	private final VarType returnType; // only used if a fcn
+	
+	/**
+	 * Only used if this is a function. Stores whether we should exit this scope and stop executing.
+	 */
+	private boolean shouldExit = false;
+
+	/**
+	 * Construct offshoot environments, different scope.
+	 * 
+	 * @param depth      the depth of the environment, with global having 0. the
+	 *                   first block has depth 1, then depth 2, etc.
+	 * @param parent     the parent environment to this one.
+	 * @param returnType including this means it is a function. additionally,
+	 *                   specifies return type for the fcn.
+	 */
+	public LocalEnvironment(IEnvironment<T> parent, VarType returnType) {
+		this.parent = parent;
+		this.depth = parent.getDepth() + 1;
+		this.function = true;
+		this.returnType = returnType;
+	}
+
+	/**
+	 * Construct offshoot environments, different scope.
+	 * 
+	 * @param depth  the depth of the environment, with global having 0. the first
+	 *               block has depth 1, then depth 2, etc.
+	 * @param parent the parent environment to this one.
+	 */
+	public LocalEnvironment(IEnvironment<T> parent) {
+		this.parent = parent;
+		this.depth = parent.getDepth() + 1;
+		// since function parameter not given, will use parent's function parameter
+		this.function = parent.isFunction();
+		this.returnType = parent.getReturnType();
+	}
+
+	/**
+	 * Determines whether there is an entry in this environment or any of its
+	 * parents for the given name.
+	 * 
+	 * @param name name to check
+	 * @return true if the key exists somewhere here or upward in the hierarchy,
+	 *         false otherwise.
+	 */
+	public boolean has(String name) {
+
+		boolean thisHas = store.containsKey(name);
+		// if this has it, return true.
+		// if this doesn't have it, check if it has a parent.
+		// if there's no parent, then just return false.
+		// if there is a parent, then recurse onto the parent.
+		return thisHas || (parent == null ? false : parent.has(name));
+
+	}
+
+	/**
+	 * Puts a value to a variable that is NEW to the environment. This is like
+	 * saying "int x = 5": it puts the value 5 at "x". Note that this method will
+	 * get angry if you try to put a name that already exists at this scope. You can
+	 * overload something from a parent scope, but you CANNOT redefine a variable
+	 * within the same scope.
+	 * 
+	 * @param name
+	 * @param val
+	 * @return false if the variable already exists at the scope, true if it does
+	 *         not
+	 */
+	public boolean put(String name, T val, boolean parameter) {
+		if (store.containsKey(name)) {
+			// cannot use this method if the current scope already has an identifier
+			// for that name.
+			return false;
+		}
+		store.put(name, val);
+		parameter_indicator.put(name, parameter);
+		return true;
+	}
+
+	/**
+	 * Assigns a value to a variable that is already in the environment.
+	 * 
+	 * @param name
+	 * @param val
+	 */
+	public boolean assign(String name, T val) {
+		// we need to find the highest scope identifier that is in the environment.
+		// like how we can override a variable in a more nested scope.
+
+		// case 1: check if the identifier exists at this level
+		if (store.containsKey(name)) {
+			Object prevVal = store.get(name);
+
+			// verify that the new value does not change the type of the identifier
+			if (!prevVal.getClass().equals(val.getClass())) {
+				return false;
+			}
+			store.put(name, val); // replace the value
+
+			// case 2: check if we have a parent to recurse to
+		} else if (parent == null) {
+			// if there is no parent, and it was not at this level, then the identifier
+			// does not exist in the environment.
+			return false;
+
+			// case 3: recurse to the parent
+		} else {
+			return parent.assign(name, val);
+		}
+		return false;
+	}
+
+	/**
+	 * Generally gets the object associated with the identifier. Scope-aware. Gets
+	 * the most nested value for the identifier.
+	 * 
+	 * @param name name of the identifier
+	 * @return the associated object
+	 */
+	public T get(String name) {
+		// if it's at this level, return its value.
+		if (store.containsKey(name))
+			return store.get(name);
+		// otherwise, try to recurse.
+		else {
+			if (parent == null)
+				throw new RuntimeException("Environment does not have object '" + name + "'.");
+			return parent.get(name);
+		}
+	}
+
+	/**
+	 * Determines whether the scope is a function or is a child scope of a function.
+	 * 
+	 * @return
+	 */
+	public boolean isFunction() {
+		return function;
+	}
+
+	/**
+	 * Gets the depth of the scope. Globals are at 0, the next level is 1, then 2,
+	 * and so on. Higher depth means more nested scope.
+	 * 
+	 * @return
+	 */
+	public int getDepth() {
+		return depth;
+	}
+
+	/**
+	 * Gets the return type of the environment. This ONLY makes sense if it's inside
+	 * a function.
+	 * 
+	 * @return
+	 */
+	public VarType getReturnType() {
+		if (!function)
+			throw new RuntimeException("Tried to get return type outside of a function!");
+		return returnType;
+	}
+
+	public int getKindIdx(String name) {
+		if (store.containsKey(name)) {
+			if (depth == 0)
+				return 0; // global
+			if (function) {
+				if (parameter_indicator.containsKey(name))
+					return 1; // parameter
+				else
+					return 2; // local
+			}
+			return 3; // variable
+		}
+		if (parent == null)
+			return -1; // not here, not in parent...
+		return parent.getKindIdx(name);
+	}
+
+	public boolean shouldExit() {
+		return shouldExit;
+	}
+
+	public void setShouldExit() {
+		shouldExit = true;
+		if (parent instanceof LocalEnvironment<T> loc) {
+			loc.setShouldExit();
+		}
+	}
+
+}

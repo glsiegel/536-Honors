@@ -1,0 +1,10 @@
+as file1;
+import file2 as f2;
+
+int x = -1; // globals need to be initialized with references unrelated to other files
+x = f2.x;
+
+while (x>=0) {
+    print x;
+    x = x - 1;
+}

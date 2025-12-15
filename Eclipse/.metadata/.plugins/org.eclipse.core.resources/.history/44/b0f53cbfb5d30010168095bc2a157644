@@ -1,0 +1,31 @@
+package data;
+
+import pipeline.FileManager;
+import pipeline.StatementData;
+
+/**
+ * Look, I know this is terrible.
+ * I'm trying to learn Rust so my mind is there right now.
+ * 
+ */
+public class Outcome {
+	public final boolean hasManager;
+	private final Object result;
+	
+	public Outcome(FileManager<VarType> manager) {
+		this.result = manager;
+		hasManager = true;
+	}
+	public Outcome(StatementData data) {
+		this.result = data;
+		hasManager = false;
+	}
+	
+	public FileManager<VarType> getManager() {
+		return (FileManager<VarType>) result;
+	}
+	
+	public StatementData getStatementData() {
+		return (StatementData) result;
+	}
+}

@@ -1,0 +1,9 @@
+as big;
+import high as h;
+
+int x = 10;
+int a = 3;
+
+fun int values() {
+    return h.x;
+}

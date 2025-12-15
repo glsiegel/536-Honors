@@ -1,0 +1,7 @@
+as high;
+import big as big;
+
+int x = 50;
+fun int x() {
+    return big.values();
+}

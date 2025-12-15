@@ -1,0 +1,622 @@
+package interpreter;
+
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
+
+import data.*;
+import data.Expr.Indirect;
+import data.Stmt.As;
+import data.Stmt.Import;
+import env.GlobalEnvironment;
+import env.IEnvironment;
+import env.LocalEnvironment;
+import error.VisitorError;
+import pipeline.FileInfo;
+import pipeline.FileManager;
+import pipeline.Rootpath;
+
+/**
+ * Interprets a list of statements. When imports occur, builds the globals from
+ * other files and stores them.
+ */
+class Interpreter implements Expr.Visitor<Object>, Stmt.Visitor<Void> {
+
+	// required additions for importing
+	/**
+	 * If this interpreter is ran on something that needs imports, then a file
+	 * manager is automatically created and stored here.
+	 */
+	private FileManager<Object> fileManager;
+	/**
+	 * If this interpreter is ran on something with an "as" clause, then its
+	 * rootpath is automatically stored here.
+	 */
+	private Rootpath this_rootpath;
+	/**
+	 * The file that this interpreter is running.
+	 */
+	private final File this_file;
+	/**
+	 * Current global environment Note that this can change when running code from
+	 * other files.
+	 */
+	private GlobalEnvironment<Object> globals;
+	/**
+	 * Current environment. Could be global or local.
+	 */
+	private IEnvironment<Object> environment;
+	/**
+	 * Current environment depth. 0 is global.
+	 */
+	private int depth = 0;
+	/**
+	 * Statements that we are to run on.
+	 */
+	private List<Stmt> statementList;
+	/**
+	 * Storage space for return values of function calls.
+	 */
+	private Object returnValue;
+
+	/**
+	 * Make a new interpreter.
+	 * 
+	 * @param statements parsed statements of the file to run
+	 * @param f          the file running, important for import reasons
+	 */
+	public Interpreter(List<Stmt> statements, File f) {
+		this.statementList = statements;
+		this.this_file = f;
+	}
+
+	/**
+	 * Runs the interpreter on the provided statement list. Only run ONCE.
+	 */
+	public void run() {
+		System.out.println("RUNNING INTERPRETER");
+		// first, global collection
+		GlobalValueBuilder gb = new GlobalValueBuilder();
+		gb.run(statementList);
+		if (!gb.visitorErrors.isEmpty()) {
+			System.err.println(" ### ERROR ### Could not construct globals. Ran into these issues.");
+			for (VisitorError failure : gb.visitorErrors) {
+				System.err.println(failure);
+			}
+			return;
+		}
+
+		// ok, so we have globals
+		this.globals = gb.globals;
+		this.environment = globals;
+
+		for (Stmt statement : statementList) {
+			statement.accept(this); // run the interpreter
+		}
+		System.out.println("INTERPRETER DONE!");
+	}
+
+	/**
+	 * Helper for executing a block.
+	 * 
+	 * @param statements block to execute
+	 * @param given_env  lower-depth environment to switch to
+	 */
+	void executeBlock(List<Stmt> statements, IEnvironment<Object> given_env) {
+		IEnvironment<Object> previous = this.environment; // remember previous environment
+		try {
+			this.environment = given_env;
+			depth = this.environment.getDepth(); // update depth
+
+			if (this.environment instanceof LocalEnvironment<Object> local_env) {
+				// if we have a local environment, then we need to be able to exit
+				for (Stmt statement : statements) {
+					statement.accept(this);
+
+					if (local_env.shouldExit()) {
+						break;
+					}
+				}
+			} else {
+
+				for (Stmt statement : statements) {
+					statement.accept(this);
+				}
+
+			}
+
+		} finally {
+			this.environment = previous;
+			depth = this.environment.getDepth();
+		}
+	}
+
+	@Override
+	public Void visitFunctionStmt(Stmt.Function stmt) {
+		if (depth != 0) {
+			throw new RuntimeException("Functions can only be declared at global scope.");
+		}
+
+		String fcnName = stmt.name;
+
+		// see if this function name is taken in the global scope
+		if (globals.has(fcnName)) {
+			throw new RuntimeException("Function name '" + fcnName + "' already exists.");
+		}
+
+		globals.put(fcnName, stmt, false);
+
+		return null;
+	}
+
+	@Override
+	public Void visitIfStmt(Stmt.If stmt) {
+		// evaluate conditional, ensure boolean-ness
+		Object conditional = stmt.condition.accept(this);
+		if (!(conditional instanceof Boolean))
+			throw new RuntimeException(
+					"Conditional of if statements must evaluate to a boolean. Conditional: " + stmt.condition);
+
+		Boolean conditionalBool = (Boolean) conditional;
+
+		// simply execute whichever branch depending on the conditional
+		if (conditionalBool)
+			stmt.thenBranch.accept(this);
+		else if (stmt.elseBranch != null)
+			stmt.elseBranch.accept(this);
+
+		return null;
+	}
+
+	@Override
+	public Void visitPrintStmt(Stmt.Print stmt) {
+		Object exprVal = stmt.expression.accept(this);
+
+		System.out.println(exprVal);
+
+		return null;
+	}
+
+	@Override
+	public Void visitReturnStmt(Stmt.Return stmt) {
+		// if we are not in a function, alert that something has gone wrong.
+		if (!environment.isFunction())
+			throw new RuntimeException("Return only works in functions.");
+
+		LocalEnvironment<Object> local_env = (LocalEnvironment<Object>) environment;
+
+		// since we are now in a function, set the exit flag.
+		// this is how we deal with returns. when the exit flag is set, all loops
+		// and blocks of parent scopes with the function flag will immediately
+		// conclude their execution. see this in the while statement handler along
+		// with the executeBlock method.
+		local_env.setShouldExit();
+
+		// set the globally-managed returnValue. this is an agreed-upon location
+		// where the return value from calls will be stored.
+		if (stmt.value == null)
+			returnValue = null;
+		else
+			returnValue = stmt.value.accept(this);
+		return null;
+	}
+
+	@Override
+	public Void visitBlockStmt(Stmt.Block stmt) {
+		// make a one-layer nested scope
+		LocalEnvironment<Object> nextScope = new LocalEnvironment<>(this.environment);
+		executeBlock(stmt.statements, nextScope);
+		return null;
+	}
+
+	@Override
+	public Void visitVarStmt(Stmt.Var stmt) {
+		Object value = stmt.initializer.accept(this);
+
+		// check that the initializer has the correct type
+		if (!verifyTypeMatch(stmt.type, value))
+			throw new RuntimeException(String.format("Variable %s is initialized with incorrect type.", stmt.name));
+
+		environment.put(stmt.name, value, false); // implicitly handles problems of
+		// something already being at this scope with this name
+
+		return null;
+	}
+
+	/**
+	 * Turns a conditional expression into a true, false, or exception. Lets us
+	 * easily write the visitWhileStmt method.
+	 * 
+	 * @param condition the conditional expression
+	 * @return true, false, or throws an exception, depending on the condition
+	 */
+	private boolean _conditionHelper(Expr condition) {
+		Object condition_result = condition.accept(this);
+		if (!(condition_result instanceof Boolean))
+			throw new RuntimeException(String.format("Condition %s is not a boolean", condition));
+		return (Boolean) condition_result;
+	}
+
+	@Override
+	public Void visitWhileStmt(Stmt.While stmt) {
+
+		// see _conditionHelper above
+
+		// if it's a function, use a different loop (so fewer redundant checks)
+		if (environment.isFunction()) {
+			while (_conditionHelper(stmt.condition)) {
+				stmt.body.accept(this); // won't exit loop
+			}
+		} else {
+			// if not a function, do regular stuff
+			while (_conditionHelper(stmt.condition)) {
+				stmt.body.accept(this);
+
+				LocalEnvironment<Object> local_env = (LocalEnvironment<Object>) environment; // TODO I think this never
+																								// changes
+				// throughout the loop.
+				if (local_env.shouldExit())
+					break; // stop looping on return
+
+			}
+		}
+
+		return null;
+	}
+
+	@Override
+	public Void visitExpressionStmt(Stmt.Expression stmt) {
+		// I guess we need this so that we can just call functions.
+		stmt.expression.accept(this); // just runs the interpreter on the expression
+		return null;
+	}
+
+	@Override
+	public Void visitAssignStmt(Stmt.Assign stmt) {
+		// .assign in environment handles all the cases.
+		environment.assign(stmt.name, stmt.value.accept(this));
+
+		return null;
+	}
+
+	@Override
+	public Object visitBinaryExpr(Expr.Binary expr) {
+		// Evaluate left and right operands, then apply the operator
+		// Handle arithmetic (+, -, *, /), comparison (==, !=, <, <=, >, >=), and
+		// logical (&&, ||) operators
+
+		Object leftObj = expr.left.accept(this);
+		Object rightObj = expr.right.accept(this);
+
+		switch (expr.operator) {
+		// first look at the ones that require two integers
+		case PLUS, MINUS, MULTIPLY, DIVIDE, LESS, GREATER, LESS_EQUAL, GREATER_EQUAL -> {
+			if (!(leftObj instanceof Integer && rightObj instanceof Integer)) {
+				throw new RuntimeException("Operator " + expr.operator + " requires two numbers.");
+			}
+
+			Integer left = (Integer) leftObj;
+			Integer right = (Integer) rightObj;
+
+			// we have the integers, now just compute
+			if (expr.operator == Operator.PLUS)
+				return left + right;
+			else if (expr.operator == Operator.MINUS)
+				return left - right;
+			else if (expr.operator == Operator.MULTIPLY)
+				return left * right;
+			else if (expr.operator == Operator.DIVIDE)
+				return left / right;
+			else if (expr.operator == Operator.LESS)
+				return left < right;
+			else if (expr.operator == Operator.GREATER)
+				return left > right;
+			else if (expr.operator == Operator.LESS_EQUAL)
+				return left <= right;
+			else if (expr.operator == Operator.GREATER_EQUAL)
+				return left >= right;
+		}
+		// second look at the ones that take two bools
+		case OR, AND -> {
+			if (!(leftObj instanceof Boolean && rightObj instanceof Boolean)) {
+				throw new RuntimeException("Operator " + expr.operator + " requires two booleans.");
+			}
+
+			Boolean left = (Boolean) leftObj;
+			Boolean right = (Boolean) rightObj;
+
+			// we have the bools, just compute
+			if (expr.operator == Operator.OR) {
+				return left || right;
+			} else if (expr.operator == Operator.AND) {
+				return left && right;
+			}
+		}
+		// lastly, look at the ones that take any two types: equality and inequality
+		case EQUAL -> {
+			return leftObj.equals(rightObj);
+		}
+		case NOT_EQUAL -> {
+			return !leftObj.equals(rightObj);
+		}
+		default -> throw new RuntimeException("Operator " + expr.operator + " not implemented for binary.");
+
+		}
+
+		return null; // never gets here
+	}
+
+	@Override
+	public Object visitLiteralExpr(Expr.Literal expr) {
+		return expr.value;
+	}
+
+	@Override
+	public Object visitUnaryExpr(Expr.Unary expr) {
+		// Evaluate the right operand and apply the unary operator (!, -)
+		Object val = expr.right.accept(this);
+
+		// go through the operators
+		// only two are valid for unary, so the rest should error
+		switch (expr.operator) {
+		case MINUS:
+			// minus requires an integer. otherwise throw error
+			if (!(val instanceof Integer)) {
+				throw new RuntimeException("Can only use " + expr.operator + " on numbers");
+			}
+			Integer intVal = (Integer) val;
+			return -intVal;
+		case NOT:
+			// not requires a bool. otherwise throw error
+			if (!(val instanceof Boolean)) {
+				throw new RuntimeException("Can only use " + expr.operator + " on booleans");
+			}
+			Boolean boolVal = (Boolean) val;
+			return !boolVal;
+		default:
+			throw new RuntimeException("Unary not implemented for " + expr.operator);
+		}
+	}
+
+	@Override
+	public Object visitVariableExpr(Expr.Variable expr) {
+		return environment.get(expr.name); // .get in environment handles this
+	}
+
+	private Object _call_helper(Expr.Call expr, Stmt.Function function, GlobalEnvironment<Object> new_globals) {
+		// check that it is actually a function
+		String fcnName = function.name;
+		int numParams = function.params.size();
+		int numArgs = expr.arguments.size();
+
+		// check that passed # args matches the # required
+		if (numParams != numArgs)
+			throw new RuntimeException(
+					String.format("Function %s expects %d arguments, received %d.", fcnName, numParams, numArgs));
+
+		// Function environments are offshoots from the global environment.
+		// give them depth of 1, parent of globals, and mark the function tag.
+		LocalEnvironment<Object> fcnEnv = new LocalEnvironment<Object>(globals, function.returnType); // indicate
+																										// function
+
+		// Now, we must evaluate all the arguments and pass them to fcnEnv
+		for (int idx = 0; idx < numArgs; idx++) {
+			Stmt.Parameter param = function.params.get(idx);
+
+			String paramName = param.name();
+			VarType paramType = param.type();
+			Object argValue = expr.arguments.get(idx).accept(this);
+
+			// check if the value of the argument matches the parameter's type
+			if (!verifyTypeMatch(paramType, argValue))
+				throw new RuntimeException(
+						String.format("Invalid types. Parameter %s expects %s.", paramName, paramType.toString()));
+
+			// put into the environment now that we have done the checking & evaluating
+			// this will let the program refer to the passed value as a variable
+			// when within the function.
+			fcnEnv.put(paramName, argValue, true);
+		}
+
+		returnValue = null; // set to null so we don't accidentally
+		// recall a previous return value
+
+		// recall previous globals, and use new globals.
+		// this lets us call files in a different function by changing which globals we
+		// have access to.
+		GlobalEnvironment<Object> previous_globals = globals;
+		globals = new_globals;
+
+		executeBlock(function.body, fcnEnv); // this will set the return value if
+		// there is a return statement.
+
+		globals = previous_globals;
+
+		return returnValue;
+	}
+
+	@Override
+	public Object visitCallExpr(Expr.Call expr) {
+		String fcnName = expr.name;
+		// look for the fcn at the global scope
+		Stmt.Function fcn = globals.getFunction(fcnName);
+
+		return _call_helper(expr, fcn, globals);
+
+	}
+
+	/**
+	 * Determines whether the object matches the VarType
+	 * 
+	 * @param type
+	 * @param value
+	 * @return true/false depending
+	 */
+	private boolean verifyTypeMatch(VarType type, Object value) {
+		if (type == VarType.BOOL && value instanceof Boolean)
+			return true;
+		return type == VarType.INT && value instanceof Integer;
+	}
+
+	// Arrays removed for this implementation.
+
+//	/**
+//	 * An array expression is like saying "array[index]". It evaluates to the value
+//	 * at a certain index in a certain array.
+//	 */
+//	@Override
+//	public Object visitArrayExpr(Expr.Array expr) {
+//		// get the index and verify that it is an integer
+//		Object index_value = expr.index.accept(this);
+//		if (!verifyTypeMatch(VarType.INT, index_value)) {
+//			throw new RuntimeException("Array index must be an integer.");
+//		}
+//
+//		int index = (Integer) index_value;
+//
+//		// get the array object, check that it is actually an array and not
+//		// something else, like a function or a bool.
+//		Object arrayObj = environment.get(expr.name);
+//		if (!(arrayObj instanceof List))
+//			throw new RuntimeException("Tried to pretend that " + expr.name + " was an array.");
+//
+//		// it's complaining about unsafe cast but this is safe because they will
+//		// always be lists of objects.
+//		List<Object> cast_array = (List<Object>) arrayObj;
+//
+//		// now, just get the elt at the index
+//		return cast_array.get(index); // will handle out of bounds exception
+//	}
+
+//	/**
+//	 * An array statement is like saying "int[] array = {1,2,3,4}". It initializes
+//	 * an array in the environment.
+//	 */
+//	@Override
+//	public Void visitArrayStmt(Stmt.Array stmt) {
+//		List<Object> array = new ArrayList<>();
+//
+//		// go through each expression and evaluate them,
+//		// then make sure that their types match with the given type.
+//		for (Expr expr : stmt.initializer) {
+//			Object expr_val = expr.accept(this);
+//			if (!verifyTypeMatch(stmt.type, expr_val)) {
+//				throw new RuntimeException(String.format(
+//						"Array initializer for type %s only accepts expressions which evaluate to that type.",
+//						stmt.type));
+//
+//			}
+//
+//			array.add(expr_val); // put into our list
+//		}
+//
+//		// now, put the array in the environment.
+//		// note that this method also checks if it is trying to overwrite something
+//		// that already exists.
+//		environment.put(stmt.name, array);
+//		return null;
+//	}
+
+//	/**
+//	 * An array set statement is like saying "array[index] = value". It sets the
+//	 * value at an index in an array.
+//	 */
+//	@Override
+//	public Void visitArraySetStmt(Stmt.ArraySet stmt) {
+//		// like above, get the index and make sure it evaluates to an integer.
+//		Object index_value = stmt.index.accept(this);
+//		if (!verifyTypeMatch(VarType.INT, index_value)) {
+//			throw new RuntimeException("Array index must be an integer.");
+//		}
+//
+//		int index = (Integer) index_value;
+//
+//		// then, get the object from the environment.
+//		Object arrayObj = environment.get(stmt.name);
+//		if (!(arrayObj instanceof List)) // make sure it is in fact an array
+//			throw new RuntimeException("Tried to pretend that " + stmt.name + " was an array.");
+//
+//		// actually a safe cast because all arrays are lists of objects.
+//		List<Object> cast_array = (List<Object>) arrayObj;
+//
+//		// check index bounds just for funsies
+//		if (index < 0 || index >= cast_array.size()) {
+//			throw new RuntimeException(String.format("Index %d is not in bounds of [0, %d) for array %s.", index, 0,
+//					cast_array.size(), stmt.name));
+//		}
+//
+//		// evaluates previous value and new value
+//		Object value_at_index = cast_array.get(index);
+//		Object set_to_value = stmt.value.accept(this);
+//
+//		// verify that the new value is the same type as the previous value, so that
+//		// we can't set values of the wrong type into this area.
+//		// this is suboptimal-- ideally, we also store some 'type' value in this
+//		// entry within the environment. however, this method works too.
+//		if (!value_at_index.getClass().equals(set_to_value.getClass())) {
+//			throw new RuntimeException("Cannot assign this type to the array. Double check type matching.");
+//
+//		}
+//
+//		// simply then, set the value at the index of the list to our new value.
+//		cast_array.set(index, set_to_value);
+//
+//		return null;
+//	}
+
+	@Override
+	public Void visitImportStmt(Import stmt) {
+		// globals will already have been built
+		if (fileManager == null) {
+			// file manager built by 'as' statement
+			throw new RuntimeException(" ### PANIC! No file manager!");
+		}
+
+		// actually add the files in here, evaluate their globals
+		if (!fileManager.has(stmt.rootpath)) {
+			FileInfo<Object> fileinfo = fileManager.pullInFile(stmt.rootpath, true);
+			if (fileinfo == null) {
+				throw new RuntimeException(" ### PANIC! File " + stmt.rootpath + " not found.");
+			}
+			// TODO run the pipeline on the guy, up to globalBuilder but discluding checker
+			// ( we already ran checker as a precon)
+			// get the globals
+
+			GlobalEnvironment<Object> found_globals = InterpreterPipeline.findGlobals(fileinfo.file);
+
+			fileManager.indicateEvaluation(stmt.rootpath, new ArrayList<>(), null, found_globals, null);
+		}
+
+		return null;
+	}
+
+	@Override
+	public Void visitAsStmt(As stmt) {
+		this.this_rootpath = stmt.rootpath;
+		fileManager = new FileManager<Object>(this.this_rootpath, this.this_file);
+		fileManager.pullInFile(this_rootpath, true);
+
+		fileManager.indicateEvaluation(this_rootpath, new ArrayList<>(), statementList, globals, null);
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Object visitIndirectExpr(Indirect expr) {
+		Rootpath found_rootpath = globals.getRootpathFrom(expr.source);
+		GlobalEnvironment<Object> other_globals = fileManager.getFileInfo(found_rootpath).getGlobals();
+		if (expr.indirect instanceof Expr.Call call_expr) {
+			Stmt.Function function = other_globals.getFunction(call_expr.name);
+			if (function == null)
+				throw new RuntimeException("Did not have assoc function.");
+
+			return _call_helper(call_expr, function, other_globals);
+		} else if (expr.indirect instanceof Expr.Variable var_expr) {
+			Object value = other_globals.get(var_expr.name);
+			return value;
+		} else {
+			throw new RuntimeException("Used indirection with " + expr.indirect.getClass());
+		}
+	}
+
+}

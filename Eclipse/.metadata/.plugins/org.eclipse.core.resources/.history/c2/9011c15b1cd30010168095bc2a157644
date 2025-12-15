@@ -1,0 +1,158 @@
+package checker.checkers;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import edu.data.Expr;
+import edu.data.Expr.Binary;
+import edu.data.Expr.Call;
+import edu.data.Expr.Indirect;
+import edu.data.Expr.Literal;
+import edu.data.Expr.Unary;
+import edu.data.Expr.Variable;
+import edu.data.Stmt;
+import edu.data.Stmt.As;
+import edu.data.Stmt.Assign;
+import edu.data.Stmt.Block;
+import edu.data.Stmt.Expression;
+import edu.data.Stmt.Function;
+import edu.data.Stmt.If;
+import edu.data.Stmt.Import;
+import edu.data.Stmt.Print;
+import edu.data.Stmt.Return;
+import edu.data.Stmt.Var;
+import edu.data.Stmt.While;
+import edu.error.VisitorError;
+import edu.pipeline.Rootpath;
+import visitor.env.GlobalEnvironment;
+
+public class GlobalBuilder implements Expr.Visitor<Void>, Stmt.Visitor<Void> {
+	public final GlobalEnvironment globals = new GlobalEnvironment();
+	
+	public final List<VisitorError> visitorFailures;
+	
+	public final List<Rootpath> rootpaths_to_pull_in;
+	
+	public GlobalBuilder() {
+		visitorFailures = new ArrayList<>();
+		rootpaths_to_pull_in = new ArrayList<>();
+	}
+	
+	public void run(List<Stmt> statements) {
+		System.err.println("Checker global builder running!");
+		int count = 0;
+		for (Stmt stmt : statements) { 
+			stmt.accept(this);
+			System.err.print(count + " ");
+		}
+	}
+
+	@Override
+	public Void visitBlockStmt(Block stmt) {
+		return null;
+	}
+
+	@Override
+	public Void visitExpressionStmt(Expression stmt) {
+		return null;
+	}
+
+	@Override
+	public Void visitFunctionStmt(Function stmt) {
+		// put into globals
+		if (!globals.putFunction(stmt)) {
+			visitorFailures.add(VisitorError.New(stmt, "Function exists with this name."));
+		}
+		return null;
+	}
+
+	@Override
+	public Void visitIfStmt(If stmt) {
+		return null;
+	}
+
+	@Override
+	public Void visitPrintStmt(Print stmt) {
+		return null;
+	}
+
+	@Override
+	public Void visitReturnStmt(Return stmt) {
+		return null;
+	}
+
+	@Override
+	public Void visitVarStmt(Var stmt) {
+		if (!globals.put(stmt.name, stmt.type, false)) {
+			visitorFailures.add(VisitorError.New(stmt, "Global variable exists with this name."));
+		}
+		return null;
+	}
+
+	@Override
+	public Void visitAssignStmt(Assign stmt) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Void visitWhileStmt(While stmt) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Void visitImportStmt(Import stmt) {
+		if (rootpaths_to_pull_in.contains(stmt.rootpath)) {
+			visitorFailures.add(VisitorError.New(stmt, "Already pulled in this rootpath."));
+		} else {
+			rootpaths_to_pull_in.add(stmt.rootpath);
+		}
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Void visitAsStmt(As stmt) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Void visitBinaryExpr(Binary expr) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Void visitLiteralExpr(Literal expr) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Void visitUnaryExpr(Unary expr) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Void visitVariableExpr(Variable expr) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Void visitCallExpr(Call expr) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Void visitIndirectExpr(Indirect expr) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+	
+	
+}

@@ -1,0 +1,10 @@
+as third;
+
+import fifth as f; // can't find fifth
+import second as f;
+import first as f; // tries to overwrite f
+
+print f.x; // second.bl does not have global x
+
+
+int x = 20;

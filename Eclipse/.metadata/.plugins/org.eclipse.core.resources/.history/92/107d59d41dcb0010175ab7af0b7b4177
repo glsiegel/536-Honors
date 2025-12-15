@@ -1,0 +1,343 @@
+package edu.lsp;
+
+import java.io.File;
+import java.net.URI;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+import org.eclipse.lsp4j.Diagnostic;
+import org.eclipse.lsp4j.DidChangeTextDocumentParams;
+import org.eclipse.lsp4j.DidCloseTextDocumentParams;
+import org.eclipse.lsp4j.DidOpenTextDocumentParams;
+import org.eclipse.lsp4j.DidSaveTextDocumentParams;
+import org.eclipse.lsp4j.Position;
+import org.eclipse.lsp4j.services.TextDocumentService;
+
+import edu.checker.Checker;
+import edu.checker.TypeFailure;
+import edu.checker.TypeFailure.ExprTypeFailure;
+import edu.checker.TypeFailure.StmtTypeFailure;
+import edu.data.CodeSection;
+import edu.data.IdentifierInfo;
+import edu.data.Stmt;
+import edu.data.TerminationException;
+import edu.data.Token;
+import edu.error.LexerError;
+import edu.error.ParserError;
+import edu.lexer.Lexer;
+import edu.parser.Parser;
+import edu.pipeline.Pipeline;
+import edu.pipeline.PipelineData;
+
+import org.eclipse.lsp4j.Range;
+import org.eclipse.lsp4j.SemanticTokens;
+import org.eclipse.lsp4j.SemanticTokensParams;
+import org.eclipse.lsp4j.SemanticTokensRangeParams;
+import org.eclipse.lsp4j.TextDocumentContentChangeEvent;
+import org.eclipse.lsp4j.TextDocumentItem;
+
+public class BadlangTextDocumentService implements TextDocumentService {
+	private final Map<String, StringBuilder> openDocuments = new ConcurrentHashMap<>();
+	private final Map<String, List<Integer>> documentLineNumbers = new ConcurrentHashMap<>();
+	private final BadlangLanguageServer server;
+
+	private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
+		Thread t = new Thread(r);
+		t.setName("BadLang-Analysis-Thread");
+		t.setDaemon(true);
+		return t;
+	});
+
+	private List<Integer> getLineNumbers(String fullDoc) {
+		List<Integer> linelist = new ArrayList<Integer>();
+		linelist.add(0);
+		if (fullDoc == null || fullDoc.length() == 0) {
+
+			return linelist;
+		}
+
+		int doclength = fullDoc.length();
+		for (int i = 0; i < doclength; i++) {
+			if (fullDoc.charAt(i) == '\n') {
+				linelist.add(i + 1); // is i+1 correct...? make sure to test this
+			}
+		}
+
+		return linelist;
+	}
+
+	private List<Integer> getLineNumDiff(int startCharOffset, String text) {
+		int textlen = text.length();
+		if (text == null || textlen == 0) {
+			return new ArrayList<>();
+		}
+		List<Integer> newLinesList = new ArrayList<Integer>();
+
+		for (int i = 0; i < textlen; i++) {
+			if (text.charAt(i) == '\n') {
+				newLinesList.add(startCharOffset + i + 1);
+			}
+		}
+		return newLinesList;
+	}
+
+	public BadlangTextDocumentService(BadlangLanguageServer server) {
+		this.server = server;
+	}
+
+	@Override
+	public void didOpen(DidOpenTextDocumentParams params) {
+		// server.demoMessage("open!");
+
+		TextDocumentItem textDoc = params.getTextDocument();
+		String uri = textDoc.getUri();
+		String file_content = textDoc.getText();
+
+		openDocuments.put(uri, new StringBuilder(file_content));
+		documentLineNumbers.put(uri, getLineNumbers(file_content));
+		check(uri, file_content);
+
+	}
+
+	@Override
+	public void didChange(DidChangeTextDocumentParams params) {
+		// server.demoMessage("Changed!");
+
+		String uri = params.getTextDocument().getUri();
+		StringBuilder sb = openDocuments.get(uri);
+		if (sb == null) {
+			System.err.println("Could not find this text document. Close and reopen it.");
+			return;
+		}
+
+		// put into variable in case of concurrency
+		List<TextDocumentContentChangeEvent> changes = params.getContentChanges();
+
+		for (TextDocumentContentChangeEvent change : changes) {
+			Range r = change.getRange();
+			if (r == null) {
+				// set the whole document
+				sb.setLength(0);
+				sb.append(change.getText());
+				documentLineNumbers.put(uri, getLineNumbers(change.getText()));
+			} else {
+				List<Integer> linelist = documentLineNumbers.get(uri);
+				Position start = r.getStart();
+				Position end = r.getEnd();
+				int start_line = start.getLine();
+				int end_line = end.getLine();
+				int start_offset;
+				int end_offset;
+				if (linelist.size() == 0) {
+					start_offset = 0;
+					end_offset = 0;
+				} else {
+					start_offset = linelist.get(start_line) + start.getCharacter();
+					end_offset = linelist.get(end_line) + end.getCharacter();
+				}
+//				System.err.println(String.format("Start line: %d, start offset: %d\nEnd line: %d, end offset: %d",
+//						start_line, start_offset, end_line, end_offset));
+
+				String old_text = sb.substring(start_offset, end_offset);
+				String new_text = change.getText();
+
+//				System.err.println(String.format("Old text: '%s', new text: '%s'", old_text, new_text));
+
+				sb.replace(start_offset, end_offset, new_text);
+
+				List<Integer> old_segment_linenums = getLineNumDiff(start_offset, old_text);
+				List<Integer> new_segment_linenums = getLineNumDiff(start_offset, new_text);
+//				System.err.println(String.format("Old linenums: %s, new linenums: %s", old_segment_linenums,
+//						new_segment_linenums));
+
+				int size_diff = new_segment_linenums.size() - old_segment_linenums.size();
+
+				// remove entries between start_line and end_line inclusive
+				int old_seg_num = old_segment_linenums.size();
+				while (old_seg_num > 0) {
+					linelist.remove(end_line); // remove all of the old segments
+					end_line--;
+					old_seg_num--;
+				}
+				for (int i = 0; i < new_segment_linenums.size(); i++) {
+					linelist.add(start_line + i + 1, new_segment_linenums.get(i));
+				}
+
+				int amt_to_change = new_text.length() - old_text.length();
+				for (int lineidx = new_segment_linenums.size() + start_line + 1; lineidx < linelist.size(); lineidx++) {
+					int line_to_set = lineidx;
+					int new_value = linelist.get(lineidx) + amt_to_change;
+					linelist.set(line_to_set, new_value);
+
+//					System.err.println(String.format("S: Setting line %d to %d", line_to_set, new_value));
+				}
+
+//				System.err.println("Final linelist: " + linelist);
+
+			}
+		}
+
+		// schedule the checking to occur!
+		server.onInterrupt(() -> {
+			check(uri, sb.toString());
+		});
+
+	}
+
+	@Override
+	public void didClose(DidCloseTextDocumentParams params) {
+		// server.demoMessage("Close!");
+		// remove from the internal storage
+		String uri = params.getTextDocument().getUri();
+		if (openDocuments.containsKey(uri)) {
+			openDocuments.remove(uri);
+		}
+		if (server.pendingSemanticRequests.containsKey(uri)) {
+			server.pendingSemanticRequests.remove(uri);
+		}
+		if (server.semanticCache.containsKey(uri)) {
+			server.semanticCache.remove(uri);
+		}
+
+	}
+
+	@Override
+	public void didSave(DidSaveTextDocumentParams params) {
+		// server.demoMessage("Saved!");
+		// TODO Auto-generated method stub
+
+	}
+
+	public void check(String URI, String file_content) {
+		List<Diagnostic> diagList = new ArrayList<Diagnostic>();
+		
+		List<edu.error.Error> errors_list = new ArrayList<edu.error.Error>();
+
+		PipelineData data = Pipeline.pipe(null, null, null);
+
+		switch (data.error) {
+		
+		case FILE:
+			System.err.println("Had a file manager error. CRITICAL!");
+			return;
+		case LEXER:
+			for (LexerError error : data.lexer.errors) {
+				errors_list.add(error);
+			}
+			break;
+		case PARSER:
+			for (ParserError error : data.parser.errors) {
+				errors_list.add(error);
+			}
+			break;
+		case CHECKER:
+			for (TypeFailure failure : data.checker.typeFailures) {
+				CodeSection section;
+				if (failure instanceof ExprTypeFailure expr_failure) {
+					section = expr_failure.expr.section;
+				} else if (failure instanceof StmtTypeFailure stmt_failure) {
+					section = stmt_failure.stmt.section;
+				} else {
+					continue; // ???
+				}
+				Diagnostic my_diag = new Diagnostic(section.toRange(), failure.message);
+				diagList.add(my_diag);
+			}
+			
+			
+		// if there is NO error, OR if the checker 'errors', then we just go here.
+		// this is because, even if there is a checker error, we can continue
+		// with semantic tokens. since checker errors are really just type/name
+		// failures.
+		case NONE:
+		default:
+			List<IdentifierInfo> identifiers = data.checker.semanticTokens;
+			SemanticTokens semanticTokens = toSemanticTokens(identifiers);
+
+			// Cache results
+			server.semanticCache.put(URI, semanticTokens);
+
+			// Complete any pending requests
+			CompletableFuture<SemanticTokens> pending = server.pendingSemanticRequests.remove(URI);
+			if (pending != null) {
+				pending.complete(semanticTokens);
+			}
+
+		}
+		
+		for (edu.error.Error error : errors_list) {
+			Diagnostic my_diag = new Diagnostic(error.section.toRange(), error.message);
+			diagList.add(my_diag);
+		}
+		
+		server.showDiagnostics(URI, diagList);
+
+	}
+
+	// Source of much of this method is ChatGPT
+	public SemanticTokens toSemanticTokens(List<IdentifierInfo> identifiers) {
+		List<Integer> data = new ArrayList<>();
+
+		int prevLine = 0;
+		int prevChar = 0;
+
+		for (IdentifierInfo id : identifiers) {
+			if (id == null || id.kindIdx == -1) {
+				continue; // skip ill-formed identifiers
+			}
+			System.err.println(id);
+			int line = id.startLine;
+			int charPos = id.startChar;
+
+			// VS Code semantic tokens use relative positions
+			int deltaLine = line - prevLine;
+			int deltaChar = deltaLine == 0 ? charPos - prevChar : charPos;
+
+			int length = id.length;
+			int tokenType = id.kindIdx; // index into IdentifierInfo.KINDS
+			int tokenModifier = 0;
+
+			data.add(deltaLine);
+			data.add(deltaChar);
+			data.add(length);
+			data.add(tokenType);
+			data.add(tokenModifier);
+
+			prevLine = line;
+			prevChar = charPos;
+		}
+
+		return new SemanticTokens(data);
+	}
+
+	@Override
+	public CompletableFuture<SemanticTokens> semanticTokensRange(SemanticTokensRangeParams params) {
+		System.err.println("semanticTokensRange CALLED!");
+
+		String uri = params.getTextDocument().getUri();
+
+		SemanticTokens cachedTokens = server.semanticCache.get(uri);
+		if (cachedTokens != null) {
+			server.semanticCache.remove(uri);
+			return CompletableFuture.completedFuture(cachedTokens);
+			// TODO will this work how we want...?
+		}
+		CompletableFuture<SemanticTokens> future = new CompletableFuture<>();
+		server.pendingSemanticRequests.put(uri, future);
+
+		return future;
+
+	}
+
+	@Override
+	public CompletableFuture<SemanticTokens> semanticTokensFull(SemanticTokensParams params) {
+		// prevent full mode for TextMate coloring
+		return null;
+	}
+}

@@ -1,0 +1,6 @@
+fun int x(int a, bool c) {
+    fun bool value(int zed) {
+        return zed;
+    }
+    return value(a);
+}

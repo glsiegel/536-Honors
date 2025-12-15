@@ -1,0 +1,5 @@
+package edu.data;
+
+public class Outcome<A,B> {
+
+}

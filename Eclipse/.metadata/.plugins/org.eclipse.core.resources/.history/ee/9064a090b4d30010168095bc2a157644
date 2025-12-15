@@ -1,0 +1,147 @@
+package data;
+
+import org.eclipse.lsp4j.Position;
+import org.eclipse.lsp4j.Range;
+
+/**
+ * Class that lets users identify a segment of the raw text code, using line and
+ * character offsets to indicate the start and end of the section.
+ */
+public class CodeSection {
+	/**
+	 * Static CodeSection, used for critical errors that are file/import related
+	 * which are tough to recover from properly.
+	 */
+	public static final CodeSection ZERO = new CodeSection(0, 0, 0, 0);
+
+	/**
+	 * The line that this expression appears on. 0 is the first line.
+	 */
+	public final int startLine;
+	/**
+	 * The character offset that this expression appears on. 1 is the first
+	 * character of the given line.
+	 */
+	public final int startOffset;
+	/**
+	 * The line that this expression ends on, inclusive. 0 is the first line.
+	 */
+	public final int endLine;
+	/**
+	 * The character offset that this expression ends on, inclusive. 1 is the first
+	 * character of the given line.
+	 */
+	public final int endOffset;
+
+	/**
+	 * Makes a section given concrete starting and ending values.
+	 * 
+	 * @param startLine
+	 * @param startOffset
+	 * @param endLine
+	 * @param endOffset
+	 */
+	public CodeSection(int startLine, int startOffset, int endLine, int endOffset) {
+		this.startLine = startLine;
+		this.startOffset = startOffset;
+		this.endLine = endLine;
+		this.endOffset = endOffset;
+	}
+
+	/**
+	 
+	 */
+	
+	/**
+	 * Given a start token and end token, gets the section starting at the first
+	 * character of the first token and ending at the last character of the second
+	 * token.
+	 * 
+	 * @param firstToken starting token of section inclusive
+	 * @param lastToken ending token of section, inclusive
+	 */
+	public CodeSection(Token firstToken, Token lastToken) {
+		this.startLine = firstToken.lineNum;
+		this.startOffset = firstToken.charNum;
+		this.endLine = lastToken.lineNum;
+		this.endOffset = lastToken.charNum + lastToken.lexeme.length() - 1;
+	}
+
+	/**
+	 * Given two expressions, gets the section starting at the first character of
+	 * the first expression and ending at the last character of the second
+	 * expression.
+	 * 
+	 * @param first first expression, inclusive
+	 * @param second last expression, inclusive
+	 */
+	public CodeSection(Expr first, Expr second) {
+		this.startLine = first.section.startLine;
+		this.startOffset = first.section.startOffset;
+
+		this.endLine = second.section.endLine;
+		this.endOffset = second.section.endOffset;
+	}
+
+	/**
+	 * Makes a section just identifying a single token, starting from its first
+	 * character and ending at its last character.
+	 * 
+	 * @param token token to section
+	 */
+	public CodeSection(Token token) {
+		this.startLine = token.lineNum;
+		this.startOffset = token.charNum;
+
+		this.endLine = token.lineNum; // single tokens do not span lines
+		if (token.lexeme == null)
+			this.endOffset = token.charNum;
+		else
+			this.endOffset = token.charNum + token.lexeme.length() - 1;
+		// think: if the token is just '}', then the end offset should equal
+		// the start offset.
+
+		// think of the token 'false'.
+		// the end offset is 4 more than the start offset, since inclusive.
+	}
+
+	/**
+	 * Makes a new section which starts from the first character of the provided
+	 * token and extends to the last character of the provided section.
+	 * 
+	 * @param first token start
+	 * @param second section end
+	 */
+	public CodeSection(Token first, CodeSection second) {
+		this.startLine = first.lineNum;
+		this.startOffset = first.charNum;
+		this.endLine = second.endLine;
+		this.endOffset = second.endOffset;
+	}
+
+	/**
+	 * Makes a new section which starts from an existing section's start and extends
+	 * to the last character of the provided token.
+	 * 
+	 * @param first section start
+	 * @param second token end
+	 */
+	public CodeSection(CodeSection first, Token second) {
+		this.startLine = first.startLine;
+		this.startOffset = first.startOffset;
+		this.endLine = second.lineNum;
+		this.endOffset = second.charNum + second.lexeme.length() - 1;
+	}
+
+	@Override
+	public String toString() {
+		return String.format("Line %d Offset %d - Line %d Offset %d", startLine + 1, startOffset, endLine + 1,
+				endOffset);
+
+	}
+
+	public Range toRange() {
+		return new Range(new Position(startLine, startOffset), new Position(endLine, endOffset + 1));
+	}
+
+}

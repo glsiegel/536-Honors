@@ -1,0 +1,996 @@
+package edu.parser;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import edu.data.CodeSection;
+import edu.data.Expr;
+import edu.data.Operator;
+import edu.data.Stmt;
+import edu.data.Token;
+import edu.data.VarType;
+import edu.error.ParserError;
+import edu.pipeline.Rootpath;
+
+/**
+ * The Parser converts a sequence of tokens into an Abstract Syntax Tree (AST).
+ * 
+ * 
+ * Your parser should: 1. Take a list of tokens from the lexer 2. Build an AST
+ * using the provided Expr and Stmt classes 3. Implement recursive descent
+ * parsing based on the CFG you define 4. Handle operator precedence correctly
+ * 5. Report syntax errors with meaningful messages
+ */
+public class Parser {
+	/**
+	 * Where the parser stores the list of tokens. When tokens are consumed, they
+	 * are not actually removed from the list, although the program works as if they
+	 * are removed from the list.
+	 */
+	private final List<Token> tokenList;
+
+	/**
+	 * Where the parser puts errors.
+	 */
+	public final List<edu.error.Error> errors;
+
+	/**
+	 * Where the parser puts statements.
+	 */
+	public final List<Stmt> statements;
+
+	/**
+	 * Index within the tokenList that we're currently concerned with. Matches are
+	 * compared with the token at this index. Tokens are consumed at this index.
+	 */
+	private int cur_token_idx = 0;
+
+	/**
+	 * Number of open brackets seen minus number of closing brackets seen. Dealt
+	 * with in consume.
+	 */
+	private int bracket_depth = 0;
+
+	/**
+	 * Number of open parens seen minus number of closing parens seen. Dealt with in
+	 * consume.
+	 */
+	private int paren_depth = 0;
+
+	/**
+	 * Flag which stores when we're building a function. Used to disallow functions
+	 * from being defined in other functions.
+	 */
+	private boolean in_function = false;
+
+	/**
+	 * Flag which stores when imports are done
+	 */
+	private boolean imports_done = false;
+	
+	/**
+	 * Flag which stores when a file has already stated its rootpath
+	 */
+	private boolean as_listed = false;
+	
+	/**
+	 * Rootpath is stored here if we have an 'as'.
+	 */
+	private Rootpath rootpath;
+
+	/**
+	 * Builds a parser. Requires knowledge of the tokens already.
+	 * 
+	 * @param tokenList the list of tokens
+	 */
+	public Parser(List<Token> tokenList) {
+		this.tokenList = tokenList;
+		this.errors = new ArrayList<edu.error.Error>();
+		this.statements = new ArrayList<Stmt>();
+	}
+
+	/**
+	 * Throws an exception with a detailed error message.
+	 * This is now gone. No terminations anymore.
+	 * 
+	 * @param token   the erroring token
+	 * @param details additional details about the error
+	 * @throws TerminationException
+	 */
+//	private void hard_error(Token token, String details) throws TerminationException {
+//		String error_msg = String.format("Could not parse the following token: [%s]. Details: %s", token.toLongString(),
+//				details);
+//		errors.add(new ParserError(token, details));
+//		throw new TerminationException(); // TODO maybe aggregate more errors before this?
+//	}
+
+	/**
+	 * Throws a SOFT exception with a detailed error message. A soft exception is
+	 * one that is "recoverable" or that we will attempt to recover from. For
+	 * instance, if an expression is malformed, we can still continue parsing, just
+	 * leave out that one line.
+	 * 
+	 * @param token   the erroring token
+	 * @param details additional details about the error
+	 * @throws ParserSoftException
+	 */
+	private void skip_line_error(Token token, String details) throws ParserSoftException {
+		String error_msg = String.format("Could not parse the following token: [%s]. Details: %s", token.toLongString(),
+				details);
+		errors.add(new ParserError(token, details));
+		throw new ParserSoftException();
+	}
+
+	private void skip_to_bracket_depth_error(Token token, int target_bracket_depth, String details)
+			throws ParserSoftException {
+
+		String error_msg = String.format("Could not parse the following token: [%s]. Details: %s", token.toLongString(),
+				details);
+		errors.add(new ParserError(token, details));
+		throw new ParserSoftException(ParserSoftException.Variant.SKIP_TO_BRACKET, target_bracket_depth);
+	}
+
+	private void skip_to_paren_depth_error(Token token, int target_paren_depth, String details)
+			throws ParserSoftException {
+		String error_msg = String.format("Could not parse the following token: [%s]. Details: %s", token.toLongString(),
+				details);
+		errors.add(new ParserError(token, details));
+		throw new ParserSoftException(ParserSoftException.Variant.SKIP_TO_PAREN, target_paren_depth);
+	}
+
+	/**
+	 * Identifies that an error has occurred, but keeps running to try to recover
+	 * from it without line skipping.
+	 * 
+	 * @param token   erroring token
+	 * @param details info about the error
+	 */
+	private void recoverable_error(Token token, String details) {
+		String error_msg = String.format("Could not parse the following token: [%s]. Details: %s", token.toLongString(),
+				details);
+		errors.add(new ParserError(token, details));
+	}
+
+	/**
+	 * Checks if there is a semicolon. If not, makes an error at the location. If
+	 * there is, then consumes it. Use this wherever you check for a semicolon in a
+	 * non-exceptional case.
+	 */
+	private void semi_check() {
+		if (!match(Token.Type.SEMICOLON)) {
+			// try to place error best we can
+			recoverable_error(previousOrPeek(), "Expected a semicolon before this token.");
+
+		} else {
+			consume();
+		}
+	}
+
+	/**
+	 * Marks a token as used and advances to the next token. Once we have advanced
+	 * to the next token, we cannot move back.
+	 * 
+	 * @return the consumed token
+	 */
+	private Token consume() {
+		Token cur = tokenList.get(cur_token_idx);
+		cur_token_idx++;
+		if (null != cur.tokenType)
+			switch (cur.tokenType) {
+			case LPAREN:
+				paren_depth++;
+				break;
+			case RPAREN:
+				paren_depth--;
+				if (paren_depth < 0) {
+					recoverable_error(cur, "Mismatched parens. Remove a closing paren.");
+					// just skip this token
+					paren_depth = 0;
+					return consume();
+				}
+				break;
+			case DO:
+				bracket_depth++;
+				break;
+			case END:
+				bracket_depth--;
+				if (bracket_depth < 0) {
+					recoverable_error(cur, "Mismatched brackets. Remove a closing bracket.");
+					// just skip this token
+					bracket_depth = 0;
+					return consume();
+				}
+				break;
+			default:
+				break;
+			}
+		return cur;
+	}
+
+	/**
+	 * Just peeks at the next token. ONLY used for errors. OK? Not for anything
+	 * else.
+	 * 
+	 * @return
+	 */
+	private Token peek() {
+		if (cur_token_idx < tokenList.size()) {
+			return tokenList.get(cur_token_idx);
+		}
+		return null;
+	}
+
+	/**
+	 * Either gets the token BEFORE the current marker, or if we cannot, peeks at
+	 * the next.
+	 * 
+	 * @return the previous token if available, or just the peeked token.
+	 */
+	private Token previousOrPeek() {
+		int prev_idx = cur_token_idx - 1;
+		if (prev_idx < tokenList.size() && prev_idx >= 0) {
+			return tokenList.get(cur_token_idx);
+		}
+		return peek();
+	}
+
+	/**
+	 * Peeks at the next token and checks if its type matches one of the provided
+	 * expected types.
+	 * 
+	 * @param types as many types to check as you want!
+	 * @return true iff the type of the next token matches one of the given types
+	 */
+	private boolean match(Token.Type... types) {
+		if (cur_token_idx >= tokenList.size())
+			return false;
+		Token.Type type_to_match = tokenList.get(cur_token_idx).tokenType;
+		for (Token.Type type : types) {
+			if (type == type_to_match)
+				return true;
+		}
+		return false;
+	}
+
+	/**
+	 * My least favorite part of my implementation. Peeks at the next NEXT token and
+	 * checks if its type matches one of the provided expected types. This is
+	 * looking two tokens ahead. I do not like this, and it is used once. But it is
+	 * an effective way to solve a problem I have, so I leave it.
+	 * 
+	 * @param types as many types to check as you want!
+	 * @return true iff the type of the next token matches one of the given types
+	 */
+	public boolean matchNext(Token.Type... types) {
+		if (cur_token_idx + 1 >= tokenList.size())
+			return false;
+		for (Token.Type type : types) {
+			if (type == tokenList.get(cur_token_idx + 1).tokenType)
+				return true;
+		}
+		return false;
+	}
+
+	/**
+	 * Apply the parser's functionality, getting an ordered list of statements.
+	 * 
+	 * @return list of statements, where each statement is an AST
+	 */
+	public void run() {
+		cur_token_idx = 0;
+		paren_depth = 0;
+		bracket_depth = 0;
+		in_function = false;
+		imports_done = false;
+		as_listed = false;
+
+		while (cur_token_idx < tokenList.size()) {
+			if (match(Token.Type.EOF))
+				break;
+			Stmt stmt;
+			try {
+				stmt = statement();
+				statements.add(stmt);
+			} catch (ParserSoftException pse) {
+				// if there is a recoverable exception, then recover by just advancing until a
+				// semicolon.
+				if (pse.variant == ParserSoftException.Variant.SKIP_LINE) {
+					while (!match(Token.Type.SEMICOLON, Token.Type.EOF)) {
+						if (cur_token_idx >= tokenList.size()) {
+							break;
+						}
+						consume();
+					}
+					if (match(Token.Type.EOF))
+						break;
+					consume(); // otherwise, we're at a semicolon. consume the semi-colon
+				} else if (pse.variant == ParserSoftException.Variant.SKIP_TO_PAREN) {
+					boolean hasEdge = false;
+					if (paren_depth != pse.depth)
+						hasEdge = true;
+					while (true) {
+						while (!match(Token.Type.RPAREN, Token.Type.EOF)) {
+							if (cur_token_idx >= tokenList.size()) {
+								break;
+							}
+							consume();
+							if (paren_depth != pse.depth)
+								hasEdge = true;
+						}
+						if (match(Token.Type.RPAREN)) {
+							// consume it
+							consume();
+							if (hasEdge && paren_depth == pse.depth) {
+								break; // exit the while, we got to our skip loc
+							}
+						} else if (match(Token.Type.EOF)) {
+							// something horrible is wrong.
+							break;
+						}
+					}
+
+				} else if (pse.variant == ParserSoftException.Variant.SKIP_TO_BRACKET) {
+					boolean hasEdge = false;
+					if (bracket_depth != pse.depth)
+						hasEdge = true;
+					while (true) {
+						while (!match(Token.Type.END, Token.Type.EOF)) {
+							if (cur_token_idx >= tokenList.size()) {
+								break;
+							}
+							consume();
+							if (bracket_depth != pse.depth)
+								hasEdge = true;
+						}
+						if (match(Token.Type.END)) {
+							// consume it
+							consume();
+							if (hasEdge && bracket_depth == pse.depth) {
+								break; // exit the while, we got to our skip loc
+							}
+						} else if (match(Token.Type.EOF)) {
+							// something horrible is wrong.
+							break;
+						}
+					}
+				}
+
+			}
+
+		}
+		if (paren_depth != 0)
+			recoverable_error(tokenList.get(tokenList.size() - 1), String.format(
+					"Mismatched parens! There are %d more open parens than closing parens (negative number indicates opposite).",
+					paren_depth));
+		if (bracket_depth != 0)
+			recoverable_error(tokenList.get(tokenList.size() - 1), String.format(
+					"Mismatched brackets! There are %d more open brackets than closing brackets (negative number indicates opposite).",
+					bracket_depth));
+	}
+
+	/**
+	 * Tries to make a parameter starting from the current token.
+	 * 
+	 * @return the built parameter
+	 */
+	private Stmt.Parameter parameter() {
+		if (!match(Token.Type.TYPE)) {
+			// just skip the function.
+			// SHOULD end at
+			skip_to_paren_depth_error(peek(), paren_depth - 1,
+					"We expect a parameter for a function definition. Parameters must start with a type.");
+		}
+		String type_str = consume().lexeme;
+		if (!match(Token.Type.IDENTIFIER)) {
+			skip_to_paren_depth_error(peek(), paren_depth - 1,
+					"We expect a parameter for a function definition. Parameters must have an identifier.");
+		}
+		Token identifier_token = consume();
+		String identifier = identifier_token.lexeme;
+		CodeSection name_section = new CodeSection(identifier_token);
+
+		VarType var_type = type_str.equals("int") ? VarType.INT : VarType.BOOL;
+		if (match(Token.Type.COMMA))
+			consume(); // just get rid of the comma here
+		// this does mean you can have a comma after the last param, but i
+		// actually enjoy that as a feature.
+		return new Stmt.Parameter(identifier, var_type, name_section);
+	}
+
+	/**
+	 * Tries to make a statement starting from the current token.
+	 * 
+	 * @return the built statement
+	 */
+	private Stmt statement() {
+		if (match(Token.Type.AS)) {
+			if (imports_done) {
+				skip_line_error(peek(), "Can only have a single 'as' statement at the top of the file.");
+			}
+			if (as_listed) {
+				skip_line_error(peek(), "Can only declare a single 'as' statement.");
+			}
+			Token start_token = consume();
+			List<String> rootpath_list = new ArrayList<String>();
+			if (!match(Token.Type.IDENTIFIER)) {
+				skip_line_error(peek(), "Expected a directory or file name (without file extension)");
+			}
+			Token rootpath_start_token = consume();
+			rootpath_list.add(rootpath_start_token.lexeme);
+			Token rootpath_last_token = rootpath_start_token;
+			while (match(Token.Type.DOT)) {
+				consume(); // consume the dot
+				if (!match(Token.Type.IDENTIFIER)) {
+					skip_line_error(peek(), "Expected a directory or file name (without file extension) after a dot.");
+				}
+				rootpath_last_token = consume();
+				rootpath_list.add(rootpath_last_token.lexeme);
+			}
+			CodeSection rootpath_section = new CodeSection(rootpath_start_token, rootpath_last_token);
+			Token last_token = rootpath_last_token;
+			if (!match(Token.Type.SEMICOLON)) {
+				recoverable_error(last_token, "'As' statements must end in a semicolon.");
+			} else {
+				last_token = consume();
+			}
+			as_listed = true;
+			this.rootpath = new Rootpath(rootpath_list);
+			return new Stmt.As(rootpath, new CodeSection(start_token, last_token), rootpath_section);
+			
+		}
+		if (match(Token.Type.IMPORT)) {
+			if (!as_listed) {
+				skip_line_error(peek(), "When using imports, must declare who this file is at the top with an 'as' statement.");
+			}
+			if (imports_done) {
+				skip_line_error(peek(), "All imports must be at the top of the file.");
+			}
+
+			Token import_token = consume();
+			List<String> rootpath = new ArrayList<String>();
+			if (!match(Token.Type.IDENTIFIER)) {
+				skip_line_error(peek(), "Expected a directory or file name (without file extension)");
+			}
+			Token rootpath_start_token = consume();
+			rootpath.add(rootpath_start_token.lexeme);
+			Token rootpath_last_token = rootpath_start_token;
+			while (match(Token.Type.DOT)) {
+				consume(); // consume the dot
+				if (!match(Token.Type.IDENTIFIER)) {
+					skip_line_error(peek(), "Expected a directory or file name (without file extension) after a dot.");
+				}
+				rootpath_last_token = consume();
+				rootpath.add(rootpath_last_token.lexeme);
+			}
+			CodeSection rootpath_section = new CodeSection(rootpath_start_token, rootpath_last_token);
+			if (!match(Token.Type.AS)) {
+				skip_line_error(peek(), "Expected 'as' to determine import name.");
+			}
+			consume(); // consume the 'as'
+
+			if (!match(Token.Type.IDENTIFIER)) {
+				skip_line_error(peek(), "Expected name of import");
+			}
+			Token id = consume();
+
+			Token last_token = id;
+
+			if (!match(Token.Type.SEMICOLON)) {
+				recoverable_error(id, "Import statements must end in a semicolon.");
+			} else {
+				last_token = consume();
+			}
+			return new Stmt.Import(new Rootpath(rootpath), id.lexeme, new CodeSection(import_token, last_token), rootpath_section, new CodeSection(id));
+
+		}
+		imports_done = true;
+		if (match(Token.Type.DO)) {
+			Token do_token = consume();
+			List<Stmt> list = new ArrayList<>();
+			while (!match(Token.Type.END)) {
+				if (match(Token.Type.EOF)) {
+					recoverable_error(do_token, "There are mismatched brackets. We need a } to match the token.");
+					break;
+				}
+				list.add(statement());
+			}
+			CodeSection section;
+			if (match(Token.Type.EOF)) {
+				// we don't have end
+				section = new CodeSection(do_token);
+			} else {
+				// we have end
+				Token end_token = consume(); // consume the end, or EOF if something is wrong.
+				// TODO if there is no EOF does this still all work right?
+
+				section = new CodeSection(do_token, end_token);
+			}
+			
+
+			return new Stmt.Block(list, section);
+		}
+		if (match(Token.Type.IF)) {
+			Token start_token = consume();
+			Expr condition = expression();
+			if (!match(Token.Type.DO)) {
+				bracket_depth++; // artificially increment bracket depth
+				// just skip the IF and all its inner statements, since we cannot know much
+				// about them!
+				skip_to_bracket_depth_error(peek(), bracket_depth - 1,
+						"'If' statements require brackets {}. We did not find an opening bracket. Is it misplaced?");
+			}
+			Stmt then_branch = statement();
+			if (!match(Token.Type.ELSE)) {
+				// we just have a "then"!
+				CodeSection section = new CodeSection(start_token, then_branch.section);
+				return new Stmt.If(condition, then_branch, null, section);
+			}
+
+			consume(); // consume the "else"
+			Stmt else_branch = statement();
+
+			CodeSection section = new CodeSection(start_token, else_branch.section);
+
+			return new Stmt.If(condition, then_branch, else_branch, section);
+		}
+
+		// declaring a new variable
+		if (match(Token.Type.TYPE)) {
+			Token start_token = consume();
+			String type_str = start_token.lexeme;
+			VarType var_type = type_str.equals("int") ? VarType.INT : VarType.BOOL;
+
+			if (!match(Token.Type.IDENTIFIER)) {
+				// just skip this guy
+				skip_line_error(peek(),
+						"Looks like you are declaring a new variable, however it was not given a name. We expect the name of the variable, not the token you provided.");
+
+			}
+			Token var_name_token = consume();
+			CodeSection var_name_section = new CodeSection(var_name_token);
+			String var_name = var_name_token.lexeme;
+
+			if (!match(Token.Type.ASSIGN)) {
+				// then, we are declaring without initialization
+				semi_check();
+				CodeSection section = new CodeSection(start_token, var_name_token);
+				return new Stmt.Var(var_name, var_type, null, section, var_name_section);
+			}
+
+			// otherwise, we are assigning
+			consume(); // consume the = sign
+			Expr initializer = expression();
+			CodeSection section = new CodeSection(start_token, initializer.section);
+
+			semi_check();
+
+			return new Stmt.Var(var_name, var_type, initializer, section, var_name_section);
+		}
+
+		// we are creating a function
+		if (match(Token.Type.FUNCTION)) {
+			// TODO the code sections MAY be null because of recoverable errors!
+			if (in_function) {
+				// just perform this fcn defn, but recognize it's bad
+				recoverable_error(peek(), "Cannot define a function in another function.");
+			}
+			Token start_token = consume(); // consume the "fun" token
+			in_function = true;
+			String type_str = "int"; // set default so we can recover
+			if (!match(Token.Type.TYPE)) {
+				recoverable_error(peek(), "Functions need a return type (int or bool).");
+			} else {
+				type_str = consume().lexeme;
+			}
+
+			String function_name = "default"; // set default so we can recover
+			CodeSection function_name_section = null;
+
+			if (!match(Token.Type.IDENTIFIER)) {
+				recoverable_error(peek(), "Functions need a name. Instead, we got the provided token.");
+			} else {
+				Token function_token = consume();
+				function_name = function_token.lexeme;
+				function_name_section = new CodeSection(function_token);
+			}
+
+			Token open_paren = null;
+
+			if (!match(Token.Type.LPAREN)) {
+				recoverable_error(peek(),
+						"After the function name, we need an open parenthesis '(' right before the parameters list.");
+				paren_depth++; // artifically presume paren depth
+			} else {
+				open_paren = consume(); // consume the lparen
+			}
+
+			List<Stmt.Parameter> paramList = new ArrayList<>();
+			while (!match(Token.Type.RPAREN)) {
+				if (match(Token.Type.EOF)) {
+					if (open_paren == null) {
+						recoverable_error(start_token, "We are missing () in function declaration.");
+					} else {
+						recoverable_error(open_paren, "We are missing the corresponding closing paren.");
+					}
+				}
+				Stmt.Parameter param = parameter();
+				paramList.add(param);
+			}
+			consume(); // consume the rparen
+			Token open_bracket = null;
+			if (!match(Token.Type.DO)) {
+				// pretend it was there
+				bracket_depth++;
+				recoverable_error(previousOrPeek(), "We expect to find an open bracket '{' before the function body.");
+			} else {
+				open_bracket = consume(); // consume the DO '{'
+			}
+			List<Stmt> body = new ArrayList<>();
+			boolean found_end = true;
+			while (!match(Token.Type.END)) {
+				if (match(Token.Type.EOF)) {
+					if (open_bracket == null) {
+						recoverable_error(start_token, "In this function we are missing both { and } !!!");
+
+					} else {
+						recoverable_error(open_bracket,
+								"There are mismatched brackets. We need a } to match the token.");
+					}
+					found_end = false;
+					break;
+
+				}
+				body.add(statement());
+			}
+			Token end_token;
+			if (found_end)
+				end_token = consume(); // consume the END '}'
+			else
+				end_token = start_token; // just get the function start
+
+			in_function = false;
+
+			VarType var_type = type_str.equals("int") ? VarType.INT : VarType.BOOL;
+
+			CodeSection section = new CodeSection(start_token, end_token);
+			return new Stmt.Function(function_name, var_type, paramList, body, section, function_name_section);
+		}
+		if (match(Token.Type.WHILE)) {
+			Token start_token = consume();
+			Expr condition = expression();
+			if (!match(Token.Type.DO)) {
+				// pretend it was there
+				bracket_depth++;
+				recoverable_error(peek(),
+						"We expect an open bracket '{' before the while body. Instead, we go the provided token.");
+			}
+			// don't consume the 'DO' because it will be made into a block statement
+			Stmt body = statement();
+			CodeSection section = new CodeSection(start_token, body.section);
+			return new Stmt.While(condition, body, section);
+		}
+		if (match(Token.Type.PRINT)) {
+			Token start_token = consume(); // remove the PRINT token
+			Expr expr_to_print = expression();
+			semi_check();
+			CodeSection section = new CodeSection(start_token, expr_to_print.section);
+			return new Stmt.Print(expr_to_print, section);
+		}
+		if (match(Token.Type.RETURN)) {
+			Token return_token = consume(); // remove the RETURN token
+			if (match(Token.Type.SEMICOLON)) {
+				// no return expression. We just have "return;"
+				// by the way, this is the only motivating reason to have semi-
+				// colons be tokens in the language at all.
+				// if not for allowing users to type "return;" and
+				// "return [expr];", we would be able to not make ; mandatory.
+
+				// actually, since badlang currently requires functions to
+				// return either an int or a bool, then return; can never occur.
+				// i will leave this part of the code commented in case i
+				// need to extend the language later.
+
+				// with the current language description, should error.
+				skip_line_error(return_token, "Return statements in badlang must return a value.");
+				// consume();
+				// return new Stmt.Return(null);
+			}
+			Expr expr_to_return = expression();
+			semi_check();
+			return new Stmt.Return(expr_to_return, new CodeSection(return_token, expr_to_return.section));
+		}
+		if (match(Token.Type.IDENTIFIER)) {
+			// i dont like this part, but it works well.
+			if (matchNext(Token.Type.ASSIGN)) {
+
+				// variable assignment
+				Token start_token = consume();
+				String var_name = start_token.lexeme;
+				CodeSection name_section = new CodeSection(start_token);
+				consume(); // consume the '='
+				Expr value = expression();
+				semi_check();
+
+				CodeSection section = new CodeSection(start_token, value.section);
+				return new Stmt.Assign(var_name, value, section, name_section);
+			} else {
+				// expression stmt, go to fallthrough case
+			}
+		}
+
+		// otherwise, try to make an expression statement
+		Expr expr_for_stmt = expression();
+		semi_check();
+		return new Stmt.Expression(expr_for_stmt, expr_for_stmt.section);
+	}
+
+	/**
+	 * Tries to make an expression starting from the current token. Starts the
+	 * chain...
+	 * 
+	 * @return the built expression
+	 */
+	private Expr expression() {
+		return logic_or();
+	}
+
+	/**
+	 * Tries to make a logic_or expression starting from the current token. A
+	 * logic_or expression could have any number of tokens with ||.
+	 * 
+	 * @return the built operand
+	 */
+	private Expr logic_or() {
+		Expr expr = logic_and();
+		while (match(Token.Type.OR)) {
+			consume(); // get rid of OR token
+			Operator operator = Operator.OR;
+			Expr right = logic_and();
+			CodeSection section = new CodeSection(expr, right);
+			expr = new Expr.Binary(expr, operator, right, section);
+		}
+		return expr;
+	}
+
+	/**
+	 * Tries to make a logic_and expression starting from the current token. A
+	 * logic_and expression could have any number of tokens with &&.
+	 * 
+	 * @return the built operand
+	 */
+	private Expr logic_and() {
+		Expr expr = equality();
+		while (match(Token.Type.AND)) {
+			Operator operator = Operator.AND;
+			consume(); // get rid of AND token
+			Expr right = equality();
+			CodeSection section = new CodeSection(expr, right);
+			expr = new Expr.Binary(expr, operator, right, section);
+		}
+		return expr;
+	}
+
+	/**
+	 * Tries to make an equality starting from the current token. An equality could
+	 * have == or !=.
+	 * 
+	 * @return the built equality
+	 */
+	private Expr equality() {
+		Expr expr = comparison();
+		while (match(Token.Type.EQUALS_EQUALS, Token.Type.NOT_EQUALS)) {
+			Operator operator = consume().tokenType == Token.Type.NOT_EQUALS ? Operator.NOT_EQUAL : Operator.EQUAL;
+			Expr right = comparison();
+			CodeSection section = new CodeSection(expr, right);
+			expr = new Expr.Binary(expr, operator, right, section);
+		}
+
+		return expr;
+	}
+
+	/**
+	 * Tries to make a comparison starting from the current token. A comparison
+	 * could have >, >=, <, or <=.
+	 * 
+	 * @return the built comparison
+	 */
+	private Expr comparison() {
+		Expr expr = term();
+		if (match(Token.Type.GREATER, Token.Type.GREATER_OR_EQUAL, Token.Type.LESS, Token.Type.LESS_OR_EQUAL)) {
+			Token.Type matchedType = consume().tokenType;
+			Operator operator = null;
+			switch (matchedType) {
+			case GREATER:
+				operator = Operator.GREATER;
+				break;
+			case GREATER_OR_EQUAL:
+				operator = Operator.GREATER_EQUAL;
+				break;
+			case LESS:
+				operator = Operator.LESS;
+				break;
+			case LESS_OR_EQUAL:
+				operator = Operator.LESS_EQUAL;
+				break;
+			default:
+				// huh??
+				// something terrible has occurred
+			}
+			Expr right = term();
+			CodeSection section = new CodeSection(expr, right);
+			expr = new Expr.Binary(expr, operator, right, section);
+		}
+		return expr;
+	}
+
+	/**
+	 * Tries to make a term starting from the current token. A term could have a
+	 * series of expressions separated by + or -.
+	 * 
+	 * @return the built term
+	 */
+	private Expr term() {
+		Expr expr = factor();
+		while (match(Token.Type.MINUS, Token.Type.PLUS)) {
+			Operator operator = consume().tokenType == Token.Type.MINUS ? Operator.MINUS : Operator.PLUS;
+			Expr right = factor();
+			CodeSection section = new CodeSection(expr, right);
+			expr = new Expr.Binary(expr, operator, right, section);
+		}
+		return expr;
+	}
+
+	/**
+	 * Tries to make a factor starting from the current token. A factor could have a
+	 * series of expressions separated by / or *.
+	 * 
+	 * @return the built factor
+	 */
+	private Expr factor() {
+		Expr expr = unary();
+		while (match(Token.Type.QUOTIENT, Token.Type.TIMES)) {
+			Operator operator = consume().tokenType == Token.Type.QUOTIENT ? Operator.DIVIDE : Operator.MULTIPLY;
+			Expr right = unary();
+			CodeSection section = new CodeSection(expr, right);
+			expr = new Expr.Binary(expr, operator, right, section);
+		}
+		return expr;
+	}
+
+	/**
+	 * Tries to make a unary starting from the current token. A unary could have a
+	 * series of - or ! before an expression.
+	 * 
+	 * @return the built unary
+	 */
+	private Expr unary() {
+		if (match(Token.Type.MINUS) || match(Token.Type.NOT)) {
+			Token operator_token = consume();
+			Operator operator = operator_token.tokenType == Token.Type.MINUS ? Operator.MINUS : Operator.NOT;
+			Expr right = unary();
+			CodeSection section = new CodeSection(operator_token.lineNum, operator_token.charNum, right.section.endLine,
+					right.section.endOffset);
+			return new Expr.Unary(operator, right, section);
+		}
+		return primary();
+	}
+
+	/**
+	 * Tries to make a primary starting from the current token. A primary is a
+	 * literal or could also designate something with parens () to control the order
+	 * of operations. A primary can ALSO be some 'indirection' from an import
+	 * statement.
+	 * 
+	 * @return the built primary
+	 */
+	private Expr primary() {
+		// now we need to do all the big boy checks.
+		if (match(Token.Type.FALSE)) {
+			Token false_token = consume();
+			CodeSection section = new CodeSection(false_token);
+			return new Expr.Literal(false, section);
+		}
+		if (match(Token.Type.TRUE)) {
+			return new Expr.Literal(true, new CodeSection(consume()));
+		}
+		if (match(Token.Type.NUMBER)) {
+			Token token = consume();
+
+			return new Expr.Literal(Integer.parseInt(token.lexeme), new CodeSection(token));
+		}
+
+		// match the case where we have input parens for precedence
+		if (match(Token.Type.LPAREN)) {
+			Token open_paren = consume();
+			Expr expr = expression();
+			if (match(Token.Type.RPAREN)) {
+				consume();
+				return expr;
+			} else {
+				skip_to_paren_depth_error(consume(), paren_depth - 1,
+						"We expect a closing parenthesis ')' to match the token.");
+			}
+		}
+
+		// if none of the above, then we have a follower or an indirection with a
+		// follower
+		if (match(Token.Type.IDENTIFIER)) {
+			if (matchNext(Token.Type.DOT)) {
+				// have indirection followed by follower
+				Token start_token = consume();
+				consume(); // consume dot
+				Expr tail_end = follower();
+				CodeSection source_section = new CodeSection(start_token);
+				if (tail_end instanceof Expr.Variable var) {
+					return new Expr.Indirect(start_token.lexeme, var, new CodeSection(start_token, var.section), source_section);
+				} else if (tail_end instanceof Expr.Call call) {
+					return new Expr.Indirect(start_token.lexeme, call, new CodeSection(start_token, call.section), source_section);
+				} else {
+					// this is a problem
+					skip_line_error(start_token, "Indirection did not end with a variable or a call expression.");
+				}
+
+			}
+		}
+
+		return follower(); // we just have a follower
+
+	}
+
+	/**
+	 * Tries to make a follower. A follower is either a variable or a function call.
+	 * @return
+	 */
+	private Expr follower() {
+		if (match(Token.Type.IDENTIFIER)) {
+			// if we start with an identifier, it could be a call, or it could
+			// be something else.
+			Token next_token = consume();
+			if (match(Token.Type.LPAREN)) {
+				// this is a call to a fcn!
+				Token open_paren = consume(); // consume the lparen
+
+				// build the fcn call
+				List<Expr> args = new ArrayList<>();
+				boolean needs_comma = false;
+				while (!match(Token.Type.RPAREN)) {
+					if (needs_comma) {
+						if (!match(Token.Type.COMMA)) {
+							recoverable_error(peek(), "Expected a comma between arguments in a function call.");
+							// just presume it is there, keep going
+						} else {
+							consume(); // get rid of the comma
+						}
+					}
+					if (match(Token.Type.EOF)) { // TODO is paren_depth needed here?
+						skip_line_error(open_paren,
+								String.format("There are mismatched parens. We need a ) to match the token."));
+					}
+					args.add(expression());
+					needs_comma = true;
+				}
+				Token call_end = consume(); // consume the rparen
+				CodeSection section = new CodeSection(next_token, call_end);
+				return new Expr.Call(next_token.lexeme, args, section, new CodeSection(next_token));
+			} else {
+				// this is a variable!
+				return new Expr.Variable(next_token.lexeme, new CodeSection(next_token));
+			}
+			
+
+	
+		}
+		// if we can't find a match, just... skip the token, i guess!
+		skip_line_error(consume(), "Unexpected token");
+		return null;
+	}
+	
+	public boolean hasAs() {
+		return as_listed;
+	}
+	
+	public Rootpath getRootpath() {
+		return as_listed ? rootpath : null;
+	}
+		
+}

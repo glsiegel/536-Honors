@@ -1,0 +1,25 @@
+int x = 5;
+int sixty = 60;
+fun int val(int name) {
+    print x;
+    int fifty = 50;
+    sixty = fifty + 10;
+    int three = 3;
+    fifty = three + 2;
+    int sixty = sixty;
+
+
+    // jabodcji;
+    return 0;
+}
+fun bool value_again(int name) {
+    if (name > 5) {
+        return false;
+    } else {
+        if (name < -5) {
+            return true;
+        } else {
+            return false;
+        }
+    }
+}

@@ -1,0 +1,5 @@
+package data;
+
+public class TerminationException extends RuntimeException {
+
+}

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<qualifiedTypeNameHistroy>
+    <fullyQualifiedTypeName name="org.eclipse.lsp4j.services.LanguageServer"/>
+    <fullyQualifiedTypeName name="java.util.List"/>
+    <fullyQualifiedTypeName name="edu.wisc.ParserException"/>
+    <fullyQualifiedTypeName name="edu.data.VarType"/>
+    <fullyQualifiedTypeName name="edu.wisc.ParserSoftException.Variant"/>
+    <fullyQualifiedTypeName name="java.util.Arrays"/>
+    <fullyQualifiedTypeName name="edu.semantics.IdentifierInfo.Kind"/>
+    <fullyQualifiedTypeName name="edu.data.Stmt.Parameter"/>
+    <fullyQualifiedTypeName name="edu.semantics.IdentifierInfo"/>
+    <fullyQualifiedTypeName name="interpreter.IEnvironment"/>
+    <fullyQualifiedTypeName name="edu.data.Stmt"/>
+    <fullyQualifiedTypeName name="edu.data.Expr"/>
+    <fullyQualifiedTypeName name="interpreter.GlobalBuilder"/>
+    <fullyQualifiedTypeName name="edu.data.Expr.Variable"/>
+    <fullyQualifiedTypeName name="edu.data.Expr.Call"/>
+    <fullyQualifiedTypeName name="edu.data.Stmt.Function"/>
+    <fullyQualifiedTypeName name="edu.pipeline.Rootpath"/>
+    <fullyQualifiedTypeName name="edu.error.Error"/>
+    <fullyQualifiedTypeName name="edu.pipeline.FileInfo"/>
+    <fullyQualifiedTypeName name="edu.data.Stmt.As"/>
+    <fullyQualifiedTypeName name="edu.data.Token.Type"/>
+    <fullyQualifiedTypeName name="edu.pipeline.Pipeline"/>
+    <fullyQualifiedTypeName name="java.util.Map"/>
+    <fullyQualifiedTypeName name="edu.pipeline.FileManager"/>
+    <fullyQualifiedTypeName name="java.util.Iterator"/>
+    <fullyQualifiedTypeName name="java.util.Map.Entry"/>
+    <fullyQualifiedTypeName name="java.lang.System"/>
+    <fullyQualifiedTypeName name="error.ParserError"/>
+</qualifiedTypeNameHistroy>

@@ -1,0 +1,31 @@
+fun bool perform_op(int a, int b, int c) {
+    if (a + b > c) {
+        return true;
+    } else {
+        if (a*b < c) {
+            return true;
+        } else {
+            return false;
+        }
+    }
+}
+
+int i = 0;
+int good_counter = 0;
+int bad_counter = 0;
+while (i < 50) {
+    bool outcome = perform_op(i, -i + 10, -i * 10);
+    if (outcome) {
+        good_counter = good_counter + 1;
+        {
+            print good_counter;
+            print bad_counter;
+        }
+    } else {
+        bad_counter = bad_counter + 1;
+    }
+    i = i + 1;
+}
+
+print good_counter;
+print bad_counter;

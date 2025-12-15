@@ -1,0 +1,274 @@
+package edu.pipeline;
+
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+
+import org.eclipse.lsp4j.SemanticTokens;
+
+import checker.checkers.Checker;
+import checker.checkers.GlobalTypeBuilder;
+import edu.data.CodeSection;
+import edu.data.Stmt;
+import edu.data.Token;
+import edu.data.VarType;
+import edu.error.IError;
+import edu.error.LexerError;
+import edu.lexer.Lexer;
+import edu.parser.Parser;
+
+/**
+ * Static class that allows for running different parts of the checker.
+ * 
+ */
+public class Pipeline {
+	/**
+	 * From string contents of a file, gets the list of statements in the form of
+	 * StatementData. StatementData contains a list of errors along with the list of
+	 * statements. If there are any huge unrecoverable problems, statements will be
+	 * null and errors will be recorded. Otherwise, statements will have a value,
+	 * and errors are recorded in any event.
+	 * 
+	 * @param contents the string file contents
+	 * @return StatementData structure
+	 */
+	public static StatementData getStatements(String contents) {
+		System.err.println("getStatements called on string contents: " + contents.substring(0, 10));
+		Lexer lexer = new Lexer();
+		try {
+			lexer.runOnString(contents);
+		} catch (Exception e) {
+			return new StatementData(null, lexer.errors);
+		}
+
+		if (lexer.tokenList == null) {
+			return new StatementData(null, lexer.errors);
+		}
+		// aggregate errors
+		List<edu.error.IError> aggregate = new ArrayList<edu.error.IError>();
+		aggregate.addAll(lexer.errors);
+
+		List<Token> token_list = lexer.tokenList;
+		Parser parser = new Parser(token_list);
+
+		try {
+
+			parser.run();
+		} catch (Exception e) {
+
+			aggregate.addAll(parser.errors);
+			return new StatementData(null, aggregate);
+		}
+
+		aggregate.addAll(parser.errors);
+
+		if (parser.hasAs()) {
+			return new StatementData(parser.statements, aggregate, parser.getRootpath());
+		} else {
+			return new StatementData(parser.statements, aggregate);
+		}
+	}
+
+	/**
+	 * From a file, gets the list of statements in the form of StatementData.
+	 * StatementData contains a list of errors along with the list of statements. If
+	 * there are any huge unrecoverable problems, statements will be null and errors
+	 * will be recorded. Otherwise, statements will have a value, and errors are
+	 * recorded in any event.
+	 * 
+	 * @param file the file
+	 * @return StatementData structure
+	 */
+	public static StatementData getStatements(File file) {
+		System.err.println("getStatements called on file " + file.getName());
+		Lexer lexer = new Lexer();
+		try {
+
+			lexer.runOnFile(file.getAbsolutePath());
+
+		} catch (Exception e) {
+			return new StatementData(null, lexer.errors);
+		}
+
+		if (lexer.tokenList == null)
+			return new StatementData(null, lexer.errors);
+		// aggregate errors
+		List<edu.error.IError> aggregate = new ArrayList<edu.error.IError>();
+		aggregate.addAll(lexer.errors);
+
+		List<Token> token_list = lexer.tokenList;
+		Parser parser = new Parser(token_list);
+
+		try {
+
+			parser.run();
+		} catch (Exception e) {
+
+			aggregate.addAll(parser.errors);
+			return new StatementData(null, aggregate);
+		}
+
+		aggregate.addAll(parser.errors);
+
+		if (parser.hasAs()) {
+			return new StatementData(parser.statements, aggregate, parser.getRootpath());
+		} else {
+			return new StatementData(parser.statements, aggregate);
+		}
+	}
+
+	/**
+	 * From a list of statements, runs the global builder. The global builder
+	 * discerns the globals in the file. In particular, it determines the functions
+	 * and global variables. This is important so that all files can know what
+	 * globals are available BEFORE the checker runs.
+	 * 
+	 * @param statements list of statements to run on
+	 * @return GlobalBuilder object
+	 */
+	public static GlobalTypeBuilder runGlobalBuilder(List<Stmt> statements) {
+		System.err.println("runGlobalBuilder called on statements");
+		GlobalTypeBuilder globalBuilder = new GlobalTypeBuilder();
+		globalBuilder.run(statements);
+		return globalBuilder;
+	}
+
+	/**
+	 * From a list of statements, runs the checker. This will provide the Checker
+	 * object, which stores all the errors present. If a rootpath and file manager
+	 * are not given, then this file is treated as a singleton. Otherwise, it is
+	 * acknowledged as a part of a larger collective.
+	 * 
+	 * @param statements the list of statements to check
+	 * @param rootpath   nullable, the rootpath of the file or null if singleton
+	 * @param manager    nullable, the manager of the file or null if singleton
+	 * @return Checker containing the errors
+	 */
+	public static Checker runChecker(List<Stmt> statements, Rootpath rootpath, FileManager<VarType> manager) {
+		System.err.println("runChecker called on statements");
+		Checker checker;
+		if (rootpath == null || manager == null) {
+			checker = new Checker();
+		} else {
+			checker = new Checker(rootpath, manager);
+		}
+
+		checker.runChecker(statements);
+		return checker;
+	}
+	
+	/**
+	 * Look, I know this is terrible.
+	 * I'm trying to learn Rust so my mind is there right now.
+	 * 
+	 */
+	public static class Outcome {
+		public final boolean hasManager;
+		private final Object result;
+		
+		public Outcome(FileManager<VarType> manager) {
+			this.result = manager;
+			hasManager = true;
+		}
+		public Outcome(StatementData data) {
+			this.result = data;
+			hasManager = false;
+		}
+		
+		public FileManager<VarType> getManager() {
+			return (FileManager<VarType> )result;
+		}
+		
+		public StatementData getStatementData() {
+			return (StatementData) result;
+		}
+	}
+	
+	public static FileManager<VarType> runStaticCheck(File f) {
+		List<IError> error_aggregate = new ArrayList<IError>();
+		if (!f.exists()) {
+			error_aggregate.add(new LexerError(CodeSection.ZERO, String.format("Could not find file '%s'.", f.getName())));
+			return new StatementData(null, error_aggregate);
+		}
+		StatementData data = Pipeline.getStatements(f);
+		error_aggregate.addAll(data.errors);
+		if (data.statements == null) return data; // error propigate
+		
+		
+		if (data.rootpath != null) {
+			// not singleton
+			FileManager<VarType> manager = new FileManager<>(data.rootpath, f);
+			// TODO add here
+			manager.pullInFile(data.rootpath, true);
+			GlobalTypeBuilder gtb = new GlobalTypeBuilder();
+			gtb.run(data.statements);
+			error_aggregate.addAll(gtb.visitorFailures);
+			manager.indicateEvaluation(data.rootpath, error_aggregate, data.statements, gtb.globals, null);
+			List<Rootpath> rootpaths_to_pull = new ArrayList<Rootpath>();
+			
+			rootpaths_to_pull.addAll(gtb.rootpaths_to_pull_in);
+			while (!rootpaths_to_pull.isEmpty()) {
+				Rootpath curr = rootpaths_to_pull.removeFirst();
+				
+				if (manager.has(curr)) continue;
+				
+				FileInfo<VarType> fileinfo = manager.pullInFile(curr, false);
+				if (fileinfo == null) {
+					error_aggregate.add(new edu.error.VisitorError(new CodeSection(0, 0, 0, 0),
+							String.format("Could not find file at %s.", curr)));
+					continue;
+				}
+				List<IError> curr_errors = new ArrayList<>();
+				// first, we will get the globals for the file.
+				StatementData curr_data = Pipeline.getStatements(fileinfo.file);
+				
+				curr_errors.addAll(curr_data.errors);
+
+				if (curr_data.statements == null) {
+					manager.indicateEvaluation(curr, curr_errors, null, null, null);
+					continue; // go to next in the loop
+				}
+
+				GlobalTypeBuilder curr_gtb = Pipeline.runGlobalBuilder(curr_data.statements);
+				curr_errors.addAll(curr_gtb.visitorFailures);
+				manager.indicateEvaluation(curr_data.rootpath, curr_errors, curr_data.statements, curr_gtb.globals,
+						null);
+				
+			}
+			
+			// great, so we should have globals indicated for all of them that don't have
+			// terrible errors. If they do have errors, we have to ignore.
+
+			// run checker on each that have statements
+			// otherwise, just show the errors and stop
+			for (Rootpath rootpath = manager.getNextUncheckedRootpath(); rootpath != null; rootpath = manager
+					.getNextUncheckedRootpath()) {
+				System.err.println("Next unchecked rootpath: " + rootpath);
+				FileInfo<VarType> fileinfo = manager.getFileInfo(rootpath);
+				File our_file = fileinfo.file;
+				String our_uri = our_file.toURI().toString();
+				List<Stmt> statements = fileinfo.getStatements();
+				if (statements == null) {			
+					continue;
+				}
+				Checker checker = Pipeline.runChecker(statements, rootpath, manager);
+				List<edu.error.IError> our_errors = new ArrayList<>();
+			
+				our_errors.addAll(fileinfo.getErrors());
+				our_errors.addAll(checker.visitorErrors);
+
+
+				// TODO this is messy as hell.
+				manager.indicateEvaluation(rootpath, our_errors, fileinfo.getStatements(), fileinfo.getGlobals(),
+						checker.semanticTokens);
+
+			}
+			
+			return;
+		}
+		
+		// todo more down here
+	}
+
+}

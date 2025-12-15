@@ -1,0 +1,130 @@
+package lexer;
+
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileReader;
+import java.io.IOException;
+import java.io.Reader;
+import java.io.StringReader;
+
+/**
+ * A reader that allows us to either read from a file or a string. Additionally,
+ * lets us peek one character in the future without consuming it.
+ */
+public class PleasantReader implements java.lang.AutoCloseable {
+	/**
+	 * Points to the line number of the next character.
+	 */
+	private int line_num = 0; // points to the line number of the next character (0 is first)
+	/**
+	 * Points to the character offset within the line of the next character.
+	 */
+	private int char_num = 0; // points to the index of the next character (0 is first of line)
+	/**
+	 * Stores a peeked value. Has some sentinels.
+	 * 
+	 * -2 --> no value.
+	 * 
+	 * -1 --> end of stream
+	 * 
+	 * else --> there is a peeked value
+	 */
+	private int peeked_value = -2;
+
+	/**
+	 * The underlying reader. Could be file reader or string reader.
+	 */
+	private Reader reader;
+
+	/**
+	 * Makes a pleasant reader over given file.
+	 * 
+	 * @param f file to read over
+	 * @throws FileNotFoundException if file not found...
+	 */
+	public PleasantReader(File f) throws FileNotFoundException {
+		reader = new FileReader(f);
+	}
+
+	/**
+	 * Makes a pleasant reader either over file or a string.
+	 * 
+	 * @param contents filename or string contents
+	 * @param useFile  if true, then contents is interpreted as a filename;
+	 *                 otherwise, contents is a string to read over
+	 * @throws FileNotFoundException if file not found...
+	 */
+	public PleasantReader(String contents, boolean useFile) throws FileNotFoundException {
+		if (useFile) {
+			reader = new FileReader(contents);
+		} else {
+			reader = new StringReader(contents);
+		}
+	}
+
+	/**
+	 * Reads the next unread character. Note that peeked characters are still
+	 * unread.
+	 * 
+	 * @return -1 if end of stream, or int representation of character otherwise
+	 * @throws IOException if reader had trouble reading
+	 */
+	public int read() throws IOException {
+		char_num++;
+		if (peeked_value != -2) {
+			int temp_store = peeked_value;
+			peeked_value = -2;
+			if (temp_store == '\n') {
+				char_num = 0;
+				line_num++;
+			}
+			return temp_store;
+		}
+		int super_read = reader.read();
+		if (super_read == '\n') {
+			char_num = 0;
+			line_num++;
+		}
+		return super_read;
+	}
+
+	/**
+	 * Peeks at the next value in the stream without consuming it.
+	 * 
+	 * @return int representation of the peeked value
+	 * @throws IOException if reader has trouble reading from stream
+	 */
+	public int peek() throws IOException {
+		if (peeked_value != -2)
+			return peeked_value;
+
+		peeked_value = reader.read();
+		return peeked_value;
+	}
+
+	/**
+	 * Gets the current line of the reader.
+	 * 
+	 * @return reader line
+	 */
+	public int getLine() {
+		return line_num;
+	}
+	
+	/**
+	 * Gets the current character offset of the reader.
+	 * @return reader char offset in the line
+	 */
+	public int getChar() {
+		return char_num;
+	}
+
+	@Override
+	public void close() throws IOException {
+		if (reader != null)
+			reader.close();
+		reader = null;
+
+	}
+
+}

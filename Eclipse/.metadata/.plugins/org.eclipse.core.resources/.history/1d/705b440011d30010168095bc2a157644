@@ -1,0 +1,395 @@
+package edu.lexer;
+
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+
+import edu.data.CodeSection;
+import edu.data.Token;
+import edu.error.Error;
+import edu.error.LexerError;
+
+/**
+ * The Lexer (also known as Scanner or Tokenizer) converts source code into
+ * tokens.
+ * 
+ * 
+ * Your lexer should: 1. Read the source code character by character 2.
+ * Recognize all tokens defined in the language (keywords, identifiers,
+ * literals, operators, etc.) 3. Handle whitespace appropriately 4. Report
+ * errors with meaningful messages 5. Track line numbers for error reporting
+ */
+public class Lexer {
+	
+	private static final String[] keywords = { "int", "bool", "fun", "if", "else", "while", "return", "print", "true",
+			"false", "import", "as" };
+
+	// this isn't exactly the set of operators, but this is useful for us.
+	private static final char[] op_starters = { '+', '-', '*', '/', '>', '<', '=', '!', '&', '|' };
+
+	public List<Error> errors;
+	public List<Token> tokenList;
+	/**
+	 * Tells whether, from this class, the programmer intended for this to be a singleton or not.
+	 */
+	public boolean singleton = true;
+
+	public void runOnString(String contents) {
+		tokenList = new ArrayList<Token>();
+		errors = new ArrayList<Error>();
+		if (contents == null || contents.length() < 1) {
+			return;
+		}
+
+		
+
+		try (PleasantReader reader = new PleasantReader(contents, false)) {
+
+			Token next_token;
+			for (next_token = getNextToken(reader); next_token != null
+					&& next_token.tokenType != Token.Type.EOF; next_token = getNextToken(reader)) {
+				tokenList.add(next_token);
+
+			}
+			tokenList.add(next_token); // add the EOF... does this work for string?
+		} catch (FileNotFoundException e) {
+			// hmm
+			errors.add(new Error(CodeSection.ZERO, "Could not find the file when reading from text? Something horrible happened.\n" + e.getMessage()));
+			tokenList = null;
+		} catch (IOException ioe) {
+			errors.add(new Error(CodeSection.ZERO, "Encountered IO problem when reading from text? Something horrible happened.\n" + ioe.getMessage()));
+			tokenList = null;
+		} catch (Exception e) {
+			errors.add(new Error(CodeSection.ZERO, "Had some inexplicable error.\n" + e.getMessage()));
+			tokenList = null;
+		}
+	}
+	
+	public void runOnFile(File f) {
+		tokenList = new ArrayList<>();
+		errors = new ArrayList<>();
+
+		try (PleasantReader reader = new PleasantReader(f)) {
+
+			Token next_token;
+			for (next_token = getNextToken(reader); next_token != null
+					&& next_token.tokenType != Token.Type.EOF; next_token = getNextToken(reader)) {
+				tokenList.add(next_token);
+
+			}
+			tokenList.add(next_token); // add the EOF
+
+		} catch (FileNotFoundException fnfe) {
+			errors.add(new Error(CodeSection.ZERO, "Could not find the file when reading from text? Something horrible happened.\n" + fnfe.getMessage()));
+			tokenList = null;
+		} catch (IOException ioe) {
+			errors.add(new Error(CodeSection.ZERO, "Encountered IO problem when reading from text? Something horrible happened.\n" + ioe.getMessage()));
+			tokenList = null;
+		} catch (Exception e) {
+			errors.add(new Error(CodeSection.ZERO, "Had some inexplicable error.\n" + e.getMessage()));
+			tokenList = null;
+		}
+			
+	}
+
+
+	public void runOnFile(String file_name) {
+		if (file_name == null || file_name.length() < 1) {
+			errors.add(new Error(CodeSection.ZERO, "No file name provided..."));
+			tokenList = null;
+
+		}
+		
+		runOnFile(new File(file_name));
+
+		
+	}
+
+	private boolean isAlpha(int c) {
+		// lowercase & capital letter ranges
+		return (65 <= c && c <= 90) || (97 <= c && c <= 122);
+	}
+
+	private boolean isAlphaPlus(int c) {
+		// 48 thru 57 are numbers
+		// 95 is _
+		return isAlpha(c) || (48 <= c && c <= 57) || c == 95;
+	}
+
+	/**
+	 * Finds the first index where a given character matches the element Returns -1
+	 * if no match.
+	 * 
+	 * @param character
+	 * @param array
+	 * @return
+	 */
+	private int getCharMatchIn(char character, char[] array) {
+		for (int i = 0; i < array.length; i++) {
+			if (array[i] == character)
+				return i;
+		}
+		return -1;
+	}
+
+	/**
+	 * Finds the first index where a given word matches the stored string Returns -1
+	 * if no match.
+	 * 
+	 * @param character
+	 * @param array
+	 * @return
+	 */
+	private int getStringMatchIn(String word, String[] array) {
+		for (int i = 0; i < array.length; i++) {
+			if (array[i].equals(word))
+				return i;
+		}
+		return -1;
+	}
+
+	private void error(int line, int offset, String token, String details) {
+		String error_msg = String.format("Could not tokenize \"%s\" at line %d offset %d. Details: %s", token, line,
+				offset, details);
+		errors.add(new LexerError(line, offset, error_msg));
+	}
+
+	private Token getNextToken(PleasantReader reader) throws IOException {
+		while (true) { // we have this while loop, so if we encounter an invalid token, we just ignore it.
+			int start_char_line = reader.getLine();
+			int start_char_offset = reader.getChar();
+			
+			
+			int next_read = reader.read();
+			if (next_read == -1)
+				return new Token(null, Token.Type.EOF, reader.getLine(), start_char_offset);
+
+			char next_char = (char) next_read;
+
+			// skip whitespace
+			while (next_char == ' ' || next_char == '\n' || next_char == '\t' || next_char == '\r') {
+				start_char_line = reader.getLine();
+				start_char_offset = reader.getChar();
+				
+				next_read = reader.read();
+				if (next_read == -1)
+					return new Token(null, Token.Type.EOF, start_char_line, start_char_offset);
+				next_char = (char) next_read;
+				
+			}
+			// whitespace is skipped now
+
+			// check for ()
+			if (next_char == '(') {
+				return new Token("(", Token.Type.LPAREN, start_char_line, start_char_offset);
+			}
+			if (next_char == ')') {
+				return new Token(")", Token.Type.RPAREN, start_char_line, start_char_offset);
+			}
+
+			// check for {}
+			if (next_char == '{') {
+				return new Token("{", Token.Type.DO, start_char_line, start_char_offset);
+			}
+			if (next_char == '}') {
+				return new Token("}", Token.Type.END, start_char_line, start_char_offset);
+			}
+
+			// check for ;
+			if (next_char == ';') {
+				// semicolon actually affords us very little, it's often just a delimiter
+				// however, it will be useful for return statements
+				return new Token(";", Token.Type.SEMICOLON, start_char_line, start_char_offset);
+			}
+
+			// check for ,
+			if (next_char == ',') {
+				return new Token(",", Token.Type.COMMA, start_char_line, start_char_offset);
+			}
+			// check for . (used with import
+			if (next_char == '.') {
+				return new Token(".", Token.Type.DOT, start_char_line, start_char_offset);
+			}
+
+			// check for number
+			if (next_char >= 48 && next_char <= 57) {
+				int char_marker = start_char_offset;
+				StringBuilder builder = new StringBuilder();
+				// the character is in range 0-9
+				builder.append(next_char);
+
+				while (reader.peek() >= 48 && reader.peek() <= 57) {
+					builder.append((char) reader.read());
+				}
+				return new Token(builder.toString(), Token.Type.NUMBER, start_char_line, char_marker);
+
+			}
+			int match_idx = getCharMatchIn(next_char, op_starters);
+
+			// check if an operator
+			if (match_idx >= 0) {
+				// great, we must then be an operator.
+
+				// first, just return the tokens that are easy
+				if (next_char == '+')
+					return new Token("+", Token.Type.PLUS, start_char_line, start_char_offset);
+				if (next_char == '-')
+					return new Token("-", Token.Type.MINUS, start_char_line, start_char_offset);
+				if (next_char == '*')
+					return new Token("*", Token.Type.TIMES, start_char_line, start_char_offset);
+
+				// need to determine if the / is the start of a comment or not
+				if (next_char == '/') {
+					if (reader.peek() == '/') {
+						// this is a comment
+						reader.read();
+						while (next_char != '\n') {
+							next_read = reader.read();
+							if (next_read == -1)
+								return new Token(null, Token.Type.EOF, start_char_line, start_char_offset);
+							next_char = (char) next_read;
+						}
+						return getNextToken(reader); // use recursion briefly here
+					} else {
+						// this is dividing
+						return new Token("/", Token.Type.QUOTIENT, start_char_line, start_char_offset);
+					}
+				}
+
+				// starts with '>'
+				if (next_char == '>') {
+					if (reader.peek() == '=') {
+						reader.read();
+						return new Token(">=", Token.Type.GREATER_OR_EQUAL, start_char_line, start_char_offset);
+					} else {
+						return new Token(">", Token.Type.GREATER, start_char_line, start_char_offset);
+					}
+				}
+				// starts with '<'
+				if (next_char == '<') {
+					if (reader.peek() == '=') {
+						reader.read(); // consume char
+						return new Token("<=", Token.Type.LESS_OR_EQUAL, start_char_line, start_char_offset);
+					} else {
+						return new Token("<", Token.Type.LESS, start_char_line, start_char_offset);
+					}
+				}
+
+				// starts with '='
+				if (next_char == '=') {
+					if (reader.peek() == '=') {
+						reader.read(); // consume char
+						return new Token("==", Token.Type.EQUALS_EQUALS, start_char_line, start_char_offset);
+					} else {
+						return new Token("=", Token.Type.ASSIGN, start_char_line, start_char_offset);
+					}
+				}
+
+				// starts with '!'
+				if (next_char == '!') {
+					if (reader.peek() == '=') {
+						reader.read(); // consume char
+						return new Token("!=", Token.Type.NOT_EQUALS, start_char_line, start_char_offset);
+					} else {
+						return new Token("!", Token.Type.NOT, start_char_line, start_char_offset);
+					}
+				}
+
+				// starts with '&'
+				if (next_char == '&') {
+					next_read = reader.read();
+					if (next_read == -1) {
+						error(start_char_line, start_char_offset, "&",
+								"End of file reached with a trailing '&' character.");
+						return new Token(null, Token.Type.EOF, start_char_line, start_char_offset); // we are done
+					}
+					next_char = (char) (next_read);
+					if (next_char != '&') {
+						error(start_char_line, start_char_offset, "&",
+								"Lone '&' character undefined. Need && for AND operation.");
+						// fall through, pretend it is AND
+					}
+					return new Token("&&", Token.Type.AND, start_char_line, start_char_offset);
+				}
+
+				// starts with '|'
+				if (next_char == '|') {
+					next_read = reader.read();
+					if (next_read == -1) {
+						error(start_char_line, start_char_offset, "|",
+								"End of file reached with a trailing '|' character.");
+						return new Token(null, Token.Type.EOF, start_char_line, start_char_offset);
+					}
+					next_char = (char) (next_read);
+					if (next_char != '|') {
+						error(start_char_line, start_char_offset, "|",
+								"Lone '|' character undefined. Need || for OR operation.");
+						// fall through, pretend is ||
+					}
+					return new Token("||", Token.Type.OR, start_char_line, start_char_offset);
+				}
+			}
+
+			// check if could be identifier or keyword
+			if (isAlpha(next_char)) {
+				// great, so then we have an identifier or a keyword
+				int char_marker = start_char_offset;
+				// build the longest possible identifier or keyword
+				StringBuilder builder = new StringBuilder();
+				builder.append(next_char);
+				while (isAlphaPlus(reader.peek())) {
+					builder.append((char) reader.read()); // safe cast bc not -1
+				}
+
+				// now we have the longest string
+				// check for keyword
+				match_idx = getStringMatchIn(builder.toString(), keywords);
+				String built_string = builder.toString();
+				if (match_idx == -1) {
+					// we just have an identifier
+					return new Token(built_string, Token.Type.IDENTIFIER, start_char_line, char_marker);
+				}
+				// we must have a keyword, yay!
+				// but we have to check each one, based on idx.
+				switch (match_idx) {
+				case 0:
+					return new Token(built_string, Token.Type.TYPE, start_char_line, char_marker);
+				case 1:
+					return new Token(built_string, Token.Type.TYPE, start_char_line, char_marker);
+				case 2:
+					return new Token(built_string, Token.Type.FUNCTION, start_char_line, char_marker);
+				case 3:
+					return new Token(built_string, Token.Type.IF, start_char_line, char_marker);
+				case 4:
+					return new Token(built_string, Token.Type.ELSE, start_char_line, char_marker);
+				case 5:
+					return new Token(built_string, Token.Type.WHILE, start_char_line, char_marker);
+				case 6:
+					return new Token(built_string, Token.Type.RETURN, start_char_line, char_marker);
+				case 7:
+					return new Token(built_string, Token.Type.PRINT, start_char_line, char_marker);
+				case 8:
+					return new Token(built_string, Token.Type.TRUE, start_char_line, char_marker);
+				case 9:
+					return new Token(built_string, Token.Type.FALSE, start_char_line, char_marker);
+				case 10:
+					singleton = false;
+					return new Token(built_string, Token.Type.IMPORT, start_char_line, char_marker);
+				case 11:
+					return new Token(built_string, Token.Type.AS, start_char_line, char_marker);
+				default:
+					error(start_char_line, char_marker, built_string,
+							"Lexer is confused. It thinks this is a keyword, but it isn't. Your program is fine, the lexer is incorrect.");
+					return new Token(null, Token.Type.EOF, start_char_line, start_char_offset);
+
+				}
+
+			}
+
+			error(start_char_line, start_char_offset, "" + next_char,
+					"Lexer could not understand this character. Is it an invalid character? Is it an invalid start to a token?");
+		}
+	}
+}

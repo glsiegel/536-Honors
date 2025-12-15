@@ -1,0 +1,13 @@
+package edu.error;
+
+import edu.data.CodeSection;
+
+public abstract class IError {
+	public final CodeSection section;
+	public final String message;
+	
+	public Error(CodeSection section, String message) {
+		this.section = section;
+		this.message = message;
+	}
+}

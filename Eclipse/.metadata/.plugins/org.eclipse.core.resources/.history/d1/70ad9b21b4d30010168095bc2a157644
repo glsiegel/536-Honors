@@ -1,0 +1,188 @@
+package checker;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import data.Expr;
+import data.Stmt;
+import data.VarType;
+import data.Expr.Binary;
+import data.Expr.Call;
+import data.Expr.Indirect;
+import data.Expr.Literal;
+import data.Expr.Unary;
+import data.Expr.Variable;
+import data.Stmt.As;
+import data.Stmt.Assign;
+import data.Stmt.Block;
+import data.Stmt.Expression;
+import data.Stmt.Function;
+import data.Stmt.If;
+import data.Stmt.Import;
+import data.Stmt.Print;
+import data.Stmt.Return;
+import data.Stmt.Var;
+import data.Stmt.While;
+import env.GlobalEnvironment;
+import error.VisitorError;
+import pipeline.Rootpath;
+
+/**
+ * Visitor which makes a best effort to build global environments for the type
+ * checker. Additionally, captures any issues in building a global environment.
+ * This is important for if we have a non-singleton file we are checking. In
+ * this manner, before we check ANY files, we can first evaluate all the globals
+ * of all files. Then, the checker can easily grab the global variables and
+ * functions from any file. This also lets us have dependency cycles, which is a
+ * feature I wanted in the language.
+ * 
+ * The global builder also constructs a list of rootpaths that need to be pulled
+ * into the file manager in order for this file to be checked. Meaning, once we
+ * build the globals for a file, we use the list to recursively do the same for
+ * all other files that need to be pulled in, until we have visited all required
+ * files, much like flood fill.
+ */
+public class GlobalTypeBuilder implements Expr.Visitor<Void>, Stmt.Visitor<Void> {
+
+	/**
+	 * The built globals. Retreive from here.
+	 */
+	public final GlobalEnvironment<VarType> globals = new GlobalEnvironment<VarType>();
+
+	/**
+	 * The errors that this global builder encountered. These errors won't stop the
+	 * builder from functioning.
+	 */
+	public final List<VisitorError> visitorErrors;
+
+	/**
+	 * List of rootpaths that this file depends on.
+	 */
+	public final List<Rootpath> rootpaths_to_pull_in;
+	
+	/**
+	 * Make a new global type builder.
+	 */
+	public GlobalTypeBuilder() {
+		visitorErrors = new ArrayList<>();
+		rootpaths_to_pull_in = new ArrayList<>();
+	}
+	
+	/**
+	 * Runs the global type builder on a list of statements. Can only be ran at most ONCE.
+	 * @param statements the associated statements.
+	 */
+	public void run(List<Stmt> statements) {
+		for (Stmt stmt : statements) {
+			stmt.accept(this);
+		}
+	}
+
+	@Override
+	public Void visitBlockStmt(Block stmt) {
+		return null;
+	}
+
+	@Override
+	public Void visitExpressionStmt(Expression stmt) {
+		return null;
+	}
+
+	@Override
+	public Void visitFunctionStmt(Function stmt) {
+		// put into globals
+		if (!globals.putFunction(stmt)) {
+			visitorErrors.add(VisitorError.New(stmt, "Function exists with this name."));
+		}
+		return null;
+	}
+
+	@Override
+	public Void visitIfStmt(If stmt) {
+		return null;
+	}
+
+	@Override
+	public Void visitPrintStmt(Print stmt) {
+		return null;
+	}
+
+	@Override
+	public Void visitReturnStmt(Return stmt) {
+		return null;
+	}
+
+	@Override
+	public Void visitVarStmt(Var stmt) {
+		if (!globals.put(stmt.name, stmt.type, false)) {
+			visitorErrors.add(VisitorError.New(stmt, "Global variable exists with this name."));
+		}
+		return null;
+	}
+
+	@Override
+	public Void visitAssignStmt(Assign stmt) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Void visitWhileStmt(While stmt) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Void visitImportStmt(Import stmt) {
+		if (rootpaths_to_pull_in.contains(stmt.rootpath)) {
+			visitorErrors.add(VisitorError.New(stmt, "Already pulled in this rootpath."));
+		} else {
+			rootpaths_to_pull_in.add(stmt.rootpath);
+		}
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Void visitAsStmt(As stmt) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Void visitBinaryExpr(Binary expr) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Void visitLiteralExpr(Literal expr) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Void visitUnaryExpr(Unary expr) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Void visitVariableExpr(Variable expr) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Void visitCallExpr(Call expr) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Void visitIndirectExpr(Indirect expr) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+}

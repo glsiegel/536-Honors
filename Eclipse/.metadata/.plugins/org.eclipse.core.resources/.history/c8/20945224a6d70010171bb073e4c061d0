@@ -1,0 +1,625 @@
+package edu.lsp;
+
+import java.io.File;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+import org.eclipse.lsp4j.Diagnostic;
+import org.eclipse.lsp4j.DidChangeTextDocumentParams;
+import org.eclipse.lsp4j.DidCloseTextDocumentParams;
+import org.eclipse.lsp4j.DidOpenTextDocumentParams;
+import org.eclipse.lsp4j.DidSaveTextDocumentParams;
+import org.eclipse.lsp4j.Position;
+import org.eclipse.lsp4j.services.TextDocumentService;
+
+import checker.Checker;
+import checker.GlobalTypeBuilder;
+import data.CodeSection;
+import data.IdentifierInfo;
+import data.Stmt;
+import data.VarType;
+import error.VisitorError;
+import pipeline.FileInfo;
+import pipeline.FileManager;
+import pipeline.FileManagerException;
+import pipeline.Pipeline;
+import pipeline.Rootpath;
+import pipeline.StatementData;
+
+import org.eclipse.lsp4j.Range;
+import org.eclipse.lsp4j.SemanticTokens;
+import org.eclipse.lsp4j.SemanticTokensParams;
+import org.eclipse.lsp4j.SemanticTokensRangeParams;
+import org.eclipse.lsp4j.TextDocumentContentChangeEvent;
+import org.eclipse.lsp4j.TextDocumentItem;
+
+public class BadlangTextDocumentService implements TextDocumentService {
+	private final Map<String, StringBuilder> openDocuments = new ConcurrentHashMap<>();
+	private final Map<String, List<Integer>> documentLineNumbers = new ConcurrentHashMap<>();
+	private final BadlangLanguageServer server;
+
+	private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
+		Thread t = new Thread(r);
+		t.setName("BadLang-Analysis-Thread");
+		t.setDaemon(true);
+		return t;
+	});
+
+	private List<Integer> getLineNumbers(String fullDoc) {
+		List<Integer> linelist = new ArrayList<Integer>();
+		linelist.add(0);
+		if (fullDoc == null || fullDoc.length() == 0) {
+
+			return linelist;
+		}
+
+		int doclength = fullDoc.length();
+		for (int i = 0; i < doclength; i++) {
+			if (fullDoc.charAt(i) == '\n') {
+				linelist.add(i + 1); // is i+1 correct...? make sure to test this
+			}
+		}
+
+		return linelist;
+	}
+
+	private List<Integer> getLineNumDiff(int startCharOffset, String text) {
+		int textlen = text.length();
+		if (text == null || textlen == 0) {
+			return new ArrayList<>();
+		}
+		List<Integer> newLinesList = new ArrayList<Integer>();
+
+		for (int i = 0; i < textlen; i++) {
+			if (text.charAt(i) == '\n') {
+				newLinesList.add(startCharOffset + i + 1);
+			}
+		}
+		return newLinesList;
+	}
+
+	public BadlangTextDocumentService(BadlangLanguageServer server) {
+		this.server = server;
+	}
+
+	@Override
+	public void didOpen(DidOpenTextDocumentParams params) {
+		// server.demoMessage("open!");
+
+		TextDocumentItem textDoc = params.getTextDocument();
+		String uri = textDoc.getUri();
+		String file_content = textDoc.getText();
+		
+
+		openDocuments.put(uri, new StringBuilder(file_content));
+		documentLineNumbers.put(uri, getLineNumbers(file_content));
+		
+		URI uri_obj;
+		try {
+			uri_obj = new URI(uri);
+		} catch (URISyntaxException e) {
+			System.err.println("Could not get file from URI");
+			server.demoMessage("On open URI error");
+			return;
+		}
+		
+		File f = new File(uri_obj);
+		
+		// add uri to map
+		String path = f.getAbsolutePath();
+		if (!server.filePathToURI.containsKey(path)) {
+			server.filePathToURI.put(path, uri);
+		}
+		
+		
+		
+		try {
+			runCheckProcedure(uri, f, file_content);
+		} catch (Exception e) {
+			System.err.println("Oh no, got an exception when running the check procedure.");
+			e.printStackTrace(System.err);
+		}
+
+	}
+
+	@Override
+	public void didChange(DidChangeTextDocumentParams params) {
+		// server.demoMessage("Changed!");
+
+		String uri = params.getTextDocument().getUri();
+		StringBuilder sb = openDocuments.get(uri);
+		if (sb == null) {
+			System.err.println("Could not find this text document. Close and reopen it.");
+			return;
+		}
+
+		// put into variable in case of concurrency
+		List<TextDocumentContentChangeEvent> changes = params.getContentChanges();
+
+		for (TextDocumentContentChangeEvent change : changes) {
+			Range r = change.getRange();
+			if (r == null) {
+				// set the whole document
+				sb.setLength(0);
+				sb.append(change.getText());
+				documentLineNumbers.put(uri, getLineNumbers(change.getText()));
+			} else {
+				List<Integer> linelist = documentLineNumbers.get(uri);
+				Position start = r.getStart();
+				Position end = r.getEnd();
+				int start_line = start.getLine();
+				int end_line = end.getLine();
+				int start_offset;
+				int end_offset;
+				if (linelist.size() == 0) {
+					start_offset = 0;
+					end_offset = 0;
+				} else {
+					start_offset = linelist.get(start_line) + start.getCharacter();
+					end_offset = linelist.get(end_line) + end.getCharacter();
+				}
+//				System.err.println(String.format("Start line: %d, start offset: %d\nEnd line: %d, end offset: %d",
+//						start_line, start_offset, end_line, end_offset));
+
+				String old_text = sb.substring(start_offset, end_offset);
+				String new_text = change.getText();
+
+//				System.err.println(String.format("Old text: '%s', new text: '%s'", old_text, new_text));
+
+				sb.replace(start_offset, end_offset, new_text);
+
+				List<Integer> old_segment_linenums = getLineNumDiff(start_offset, old_text);
+				List<Integer> new_segment_linenums = getLineNumDiff(start_offset, new_text);
+//				System.err.println(String.format("Old linenums: %s, new linenums: %s", old_segment_linenums,
+//						new_segment_linenums));
+
+				int size_diff = new_segment_linenums.size() - old_segment_linenums.size();
+
+				// remove entries between start_line and end_line inclusive
+				int old_seg_num = old_segment_linenums.size();
+				while (old_seg_num > 0) {
+					linelist.remove(end_line); // remove all of the old segments
+					end_line--;
+					old_seg_num--;
+				}
+				for (int i = 0; i < new_segment_linenums.size(); i++) {
+					linelist.add(start_line + i + 1, new_segment_linenums.get(i));
+				}
+
+				int amt_to_change = new_text.length() - old_text.length();
+				for (int lineidx = new_segment_linenums.size() + start_line + 1; lineidx < linelist.size(); lineidx++) {
+					int line_to_set = lineidx;
+					int new_value = linelist.get(lineidx) + amt_to_change;
+					linelist.set(line_to_set, new_value);
+
+//					System.err.println(String.format("S: Setting line %d to %d", line_to_set, new_value));
+				}
+
+//				System.err.println("Final linelist: " + linelist);
+
+			}
+		}
+
+		String result_content = sb.toString();
+
+		// schedule the checking to occur!
+		server.onInterrupt(() -> {
+			server.demoMessage("Delayed change called");
+			File f;
+			try {
+				f = new File(new URI(uri));
+			} catch (URISyntaxException e) {
+				System.err.println("Could not get file from URI");
+				server.demoMessage("On open URI error");
+				return;
+			}
+			try {
+				runCheckProcedure(uri, f, result_content);
+			} catch (RuntimeException e) {
+				System.err.println("Oh no, got an exception when running the check procedure.");
+				e.printStackTrace(System.err);
+			}
+
+		});
+
+	}
+
+	@Override
+	public void didClose(DidCloseTextDocumentParams params) {
+		// server.demoMessage("Close!");
+		// remove from the internal storage
+		String uri = params.getTextDocument().getUri();
+		if (openDocuments.containsKey(uri)) {
+			openDocuments.remove(uri);
+		}
+		if (server.pendingSemanticRequests.containsKey(uri)) {
+			server.pendingSemanticRequests.remove(uri);
+		}
+		if (server.semanticCache.containsKey(uri)) {
+			server.semanticCache.remove(uri);
+		}
+
+		URI uri_obj;
+		try {
+			uri_obj = new URI(params.getTextDocument().getUri());
+		} catch (URISyntaxException use) {
+			System.err.println("Invalid file URI");
+			return;
+		}
+
+		File closed_file = new File(uri_obj);
+		server.fileManagers.closeFile(closed_file);
+	
+		// add uri to map
+		String path = closed_file.getAbsolutePath();
+		if (server.filePathToURI.containsKey(path)) {
+			server.filePathToURI.remove(path);
+		}
+
+	}
+
+	@Override
+	public void didSave(DidSaveTextDocumentParams params) {
+		// server.demoMessage("Saved!");
+		// TODO Auto-generated method stub
+
+	}
+
+	public void runCheckProcedure(String uri, File f, String file_content) {
+
+		List<error.IError> errors_aggregate = new ArrayList<>();
+
+		// first, we will get the globals for the file.
+		StatementData data;
+		if (file_content == null)
+			data = Pipeline.getStatements(f);
+		else
+			data = Pipeline.getStatements(file_content);
+
+		errors_aggregate.addAll(data.errors);
+
+		if (data.statements == null) {
+			this.printAsDiagnostics(uri, errors_aggregate);
+			return;
+		}
+
+		if (data.rootpath == null) {
+			// singleton check
+			System.err.println("SINGLETON!!!");
+			// if we removed an "as" clause, need to remove from other managers.
+			server.fileManagers.removeSingletonFromManagers(f);
+
+			GlobalTypeBuilder builder = Pipeline.runGlobalBuilder(data.statements);
+
+			errors_aggregate.addAll(builder.visitorErrors);
+
+			// genuinely not possible for this to fail, but w/e
+			// just do this anyway ok?
+			if (builder.globals == null) {
+				this.printAsDiagnostics(uri, errors_aggregate);
+				System.err.println("CHECKING DONE!!!");
+				return;
+			}
+
+			Checker checker = Pipeline.runChecker(data.statements, null, null);
+
+			errors_aggregate.addAll(checker.visitorErrors);
+			this.printAsDiagnostics(uri, errors_aggregate);
+
+			SemanticTokens semanticTokens = toSemanticTokens(checker.semanticTokens);
+
+			// Cache results
+			server.semanticCache.put(uri, semanticTokens);
+
+			// Complete any pending requests
+			CompletableFuture<SemanticTokens> pending = server.pendingSemanticRequests.remove(uri);
+			if (pending != null) {
+				pending.complete(semanticTokens);
+			}
+
+			System.err.println("CHECKING DONE!!!");
+			return;
+
+		}
+
+		System.err.println("NOT SINGLETON!!!");
+		// if we got here, then we are not a singleton.
+		// we do have the parser data.
+
+		// first, let's get the file manager.
+		FileManager<VarType> fileManager = server.fileManagers.getOughtManager(data.rootpath, f);
+		if (fileManager == null) {
+			// if this is null, then the manager for this file does not yet exist.
+			// need to make it
+			try {
+				fileManager = new FileManager<VarType>(data.rootpath, f); // TODO what if this errors?
+			} catch (FileManagerException e) {
+				errors_aggregate.add(new error.ParserError(new CodeSection(0,0,0,0), "This file's \"as\" clause is incorrect. The file is not located at " + data.rootpath + ". Change the \"as\" clause, or change the file's name."));
+				printAsDiagnostics(uri, errors_aggregate);
+				return;
+			}
+			
+
+			// lastly, need to register this file in the manager
+			if (fileManager.pullInFile(data.rootpath, true) == null) {
+				// could not pull in file!
+				Stmt.As as_stmt = null;
+				for (Stmt stmt : data.statements) {
+					if (stmt instanceof Stmt.As found_as) {
+						as_stmt = found_as;
+						break;
+					}
+				}
+				if (as_stmt == null)
+					errors_aggregate.add(new error.VisitorError(new CodeSection(0, 0, 0, 0),
+							"Failed to pull in file with this rootpath. Could not verify its name."));
+				else
+					errors_aggregate.add(VisitorError.New(as_stmt,
+							"Failed to pull in file with this rootpath. Could not verify its name."));
+				printAsDiagnostics(uri, errors_aggregate);
+				return;
+
+			}
+
+			// add to our FM set if it works out
+			server.fileManagers.add(fileManager);
+		} else if (!fileManager.has(data.rootpath)) {
+			// TODO this is so messy. repeat code. clean this up better.
+			// this section below is repeat of above.
+			if (fileManager.pullInFile(data.rootpath, true) == null) {
+				// could not pull in file!
+				Stmt.As as_stmt = null;
+				for (Stmt stmt : data.statements) {
+					if (stmt instanceof Stmt.As found_as) {
+						as_stmt = found_as;
+						break;
+					}
+				}
+				if (as_stmt == null)
+					errors_aggregate.add(new error.VisitorError(new CodeSection(0, 0, 0, 0),
+							"Failed to pull in file with this rootpath. Could not verify its name."));
+				else
+					errors_aggregate.add(VisitorError.New(as_stmt,
+							"Failed to pull in file with this rootpath. Could not verify its name."));
+				printAsDiagnostics(uri, errors_aggregate);
+				return;
+			}
+
+		}
+
+		// at here, we have the file manager (hopefully)
+
+		// now, build the globals
+		GlobalTypeBuilder gb = Pipeline.runGlobalBuilder(data.statements);
+		errors_aggregate.addAll(gb.visitorErrors);
+
+		// inform the file manager of what we did
+		fileManager.indicateEvaluation(data.rootpath, errors_aggregate, data.statements, gb.globals, null);
+
+		// NOW: for each file that the global said needs to be included, check if they
+		// are included.
+		Set<Rootpath> checked_rootpaths = new HashSet<Rootpath>();
+		List<Rootpath> rootpaths_to_pull = new LinkedList<>();
+		rootpaths_to_pull.addAll(gb.rootpaths_to_pull_in);
+		checked_rootpaths.addAll(gb.rootpaths_to_pull_in);
+
+		while (rootpaths_to_pull.size() > 0) {
+			System.err.println(rootpaths_to_pull.size());
+			Rootpath other_rootpath = rootpaths_to_pull.removeFirst();
+
+			FileInfo<VarType> other_file_info = null;
+			// check if we have knowledge of the file
+			if (fileManager.has(other_rootpath)) {
+				other_file_info = fileManager.getFileInfo(other_rootpath);
+				// has it, no need to pull in, BUT needs to recalc
+
+				if (!other_file_info.isExpired()) // no need to recalc if it's not expired!
+					continue;
+
+			} else {
+				// need to pull it in
+				System.err.println("Needs to pull in " + other_rootpath);
+				other_file_info = fileManager.pullInFile(other_rootpath, false);
+				if (other_file_info == null) {
+					// TODO what do i do for an error section?
+					// TODO this needs to acknowledge errors better too.
+					// right now, very non descriptive.
+					errors_aggregate.add(new error.VisitorError(new CodeSection(0, 0, 0, 0),
+							String.format("Could not find file at %s.", other_rootpath)));
+					continue;
+				}
+
+			}
+
+			// we have a pulled in our file
+			// calculate its stuff too
+			List<error.IError> other_errors = new ArrayList<>();
+			// first, we will get the globals for the file.
+			StatementData other_data = Pipeline.getStatements(other_file_info.file);
+
+			other_errors.addAll(other_data.errors);
+			
+			if (!other_rootpath.equals(other_data.rootpath)) {
+				other_errors.add(new error.VisitorError(new CodeSection(0, 0, 0, 0),
+							String.format("This file name does not match its declared name. Expect odd behavior. File name: %s, Declared name: %s", other_rootpath, other_data.rootpath)));
+			}
+
+			if (other_data.statements == null || other_data.rootpath == null) {
+				fileManager.indicateEvaluation(other_rootpath, other_errors, null, null, null);
+				continue; // go to next in the loop
+			}
+
+			GlobalTypeBuilder other_gb = Pipeline.runGlobalBuilder(other_data.statements);
+			other_errors.addAll(other_gb.visitorErrors);
+			
+			
+			// now, upon checking this file, it introduces its own set of dependencies that must be checked.
+			for (Rootpath rootpath_to_add : other_gb.rootpaths_to_pull_in) {
+				if (!checked_rootpaths.contains(rootpath_to_add)) {
+					checked_rootpaths.add(rootpath_to_add);
+					rootpaths_to_pull.add(rootpath_to_add);
+				}
+			}
+			fileManager.indicateEvaluation(other_rootpath, other_errors, other_data.statements, other_gb.globals,
+					null);
+
+		}
+
+		// great, so we should have globals indicated for all of them that don't have
+		// terrible errors. If they do have errors, we have to ignore.
+
+		// run checker on each that have statements
+		// otherwise, just show the errors and stop
+		for (Iterator<Map.Entry<Rootpath, FileInfo<VarType>>> iterator = fileManager.uncheckedIterator(); iterator
+				.hasNext();) {
+			Map.Entry<Rootpath, FileInfo<VarType>> entry = iterator.next();
+
+			Rootpath rootpath = entry.getKey();
+
+			System.err.println("Next unchecked rootpath: " + rootpath);
+			FileInfo<VarType> fileinfo = entry.getValue();
+			
+			List<Stmt> statements = fileinfo.getStatements();
+			if (statements == null) {
+				// show the errors
+				continue;
+			}
+			Checker checker = Pipeline.runChecker(statements, rootpath, fileManager);
+			List<error.IError> our_errors = new ArrayList<>();
+			our_errors.addAll(fileinfo.getErrors());
+			our_errors.addAll(checker.visitorErrors);
+
+			
+			
+			// TODO messy, but would require changing some structure to fix...
+			fileManager.indicateEvaluation(rootpath, our_errors, fileinfo.getStatements(), fileinfo.getGlobals(),
+					checker.semanticTokens);
+
+
+		}
+		
+		System.err.println("About to do diagnostic and semantic token printing");
+		System.err.println("PENDING:"); 
+		System.err.println(server.pendingSemanticRequests.toString());
+		
+		// do diagnostic printing & inform of semantic tokens on all
+		for (Map.Entry<Rootpath, FileInfo<VarType>> entry : fileManager) {
+			FileInfo<VarType> info = entry.getValue();
+			File our_file = info.file;			
+			String our_uri = our_file.toURI().toString();
+			System.err.println("Our uri: " + our_uri);
+			
+			
+			// print the errors for the file
+			printAsDiagnostics(our_uri, info.getErrors());
+			
+			if (info.getIdentifiers() == null) {
+				continue;
+			}
+			
+			// if we have semantic tokens, do them here
+			// well, we have to do a little dance. Java and VSCode expect URIs in different formats. Ugh.
+			
+			String vscode_uri = server.filePathToURI.get(our_file.getAbsolutePath());
+			if (vscode_uri == null) continue; // cannot put the info anywhere
+			
+			SemanticTokens semanticTokens = toSemanticTokens(info.getIdentifiers());
+			// Cache results
+			server.semanticCache.put(vscode_uri, semanticTokens);
+
+			// Complete any pending requests
+			CompletableFuture<SemanticTokens> pending = server.pendingSemanticRequests.remove(vscode_uri);
+			if (pending != null) {
+				pending.complete(semanticTokens);
+			}
+
+						
+		}
+
+		// then... we should be DONE!
+		System.err.println("CHECKING DONE!!");
+
+	}
+
+	public void printAsDiagnostics(String uri, List<error.IError> errors) {
+		if (errors == null)
+			return;
+		List<Diagnostic> diagList = new ArrayList<Diagnostic>();
+		for (error.IError error : errors) {
+			Diagnostic my_diag = new Diagnostic(error.section.toRange(), error.message);
+			diagList.add(my_diag);
+		}
+		server.showDiagnostics(uri, diagList);
+	}
+
+	// Source of much of this method is ChatGPT
+	public static SemanticTokens toSemanticTokens(List<IdentifierInfo> identifiers) {
+		List<Integer> data = new ArrayList<>();
+
+		int prevLine = 0;
+		int prevChar = 0;
+
+		for (IdentifierInfo id : identifiers) {
+			if (id == null || id.kindIdx == -1) {
+				continue; // skip ill-formed identifiers
+			}
+			;
+			int line = id.startLine;
+			int charPos = id.startChar;
+
+			// VS Code semantic tokens use relative positions
+			int deltaLine = line - prevLine;
+			int deltaChar = deltaLine == 0 ? charPos - prevChar : charPos;
+
+			int length = id.length;
+			int tokenType = id.kindIdx; // index into IdentifierInfo.KINDS
+			int tokenModifier = 0;
+
+			data.add(deltaLine);
+			data.add(deltaChar);
+			data.add(length);
+			data.add(tokenType);
+			data.add(tokenModifier);
+
+			prevLine = line;
+			prevChar = charPos;
+		}
+
+		return new SemanticTokens(data);
+	}
+
+	@Override
+	public CompletableFuture<SemanticTokens> semanticTokensRange(SemanticTokensRangeParams params) {
+		System.err.println("Semantic tokens range CALLED!");
+		String uri = params.getTextDocument().getUri();
+
+		SemanticTokens cachedTokens = server.semanticCache.get(uri);
+		if (cachedTokens != null) {
+			server.semanticCache.remove(uri);
+			return CompletableFuture.completedFuture(cachedTokens);
+			// TODO will this work how we want...?
+		}
+		CompletableFuture<SemanticTokens> future = new CompletableFuture<>();
+		server.pendingSemanticRequests.put(uri, future);
+
+		return future;
+
+	}
+
+	@Override
+	public CompletableFuture<SemanticTokens> semanticTokensFull(SemanticTokensParams params) {
+		// prevent full mode for TextMate coloring
+		return null;
+	}
+}
